@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "id": "pixel-swe-tools",
+  "version": "1.0.0",
+  "name": "Pixel SWE · Responses 工具流",
+  "description": "实验适配：缓存工具事件直到 response.completed；修复晚到工具名，以及只有一个真实调用与一个匿名调用时的拆分参数。多候选拒绝猜测。不修改请求、角色、UA、DNS 或证书；未验证真实上游。",
+  "engine": "responses-tools-v1",
+  "options": { "lateName": true, "splitCalls": true },
+  "fixtures": [
+    {
+      "name": "声明先结束、幽灵参数晚到",
+      "events": [
+        { "type": "response.output_item.added", "output_index": 0, "item": { "type": "function_call", "id": "fc_real", "call_id": "call_real", "name": "exec_command", "arguments": "" } },
+        { "type": "response.output_item.done", "output_index": 0, "item": { "type": "function_call", "id": "fc_real", "call_id": "call_real", "name": "exec_command", "arguments": "{}" } },
+        { "type": "response.output_item.added", "output_index": 1, "item": { "type": "function_call", "id": "fc_ghost", "call_id": "call_ghost", "name": "", "arguments": "" } },
+        { "type": "response.function_call_arguments.delta", "output_index": 1, "item_id": "fc_ghost", "delta": "{\"cmd\":\"printf adapter-example\"}" },
+        { "type": "response.function_call_arguments.done", "output_index": 1, "item_id": "fc_ghost", "arguments": "{\"cmd\":\"printf adapter-example\"}" },
+        { "type": "response.output_item.done", "output_index": 1, "item": { "type": "function_call", "id": "fc_ghost", "call_id": "call_ghost", "name": "", "arguments": "{\"cmd\":\"printf adapter-example\"}" } },
+        { "type": "response.completed", "response": { "status": "completed", "output": [ { "type": "function_call", "id": "fc_real", "call_id": "call_real", "name": "exec_command", "arguments": "{}" }, { "type": "function_call", "id": "fc_ghost", "call_id": "call_ghost", "name": "", "arguments": "{\"cmd\":\"printf adapter-example\"}" } ] } }
+      ],
+      "expectedCalls": [ { "call_id": "call_real", "name": "exec_command", "arguments": "{\"cmd\":\"printf adapter-example\"}" } ]
+    },
+    {
+      "name": "合法无参数工具不被清空",
+      "events": [
+        { "type": "response.output_item.added", "output_index": 0, "item": { "type": "function_call", "id": "fc_empty", "call_id": "call_empty", "name": "get_time", "arguments": "" } },
+        { "type": "response.function_call_arguments.delta", "output_index": 0, "item_id": "fc_empty", "delta": "{}" },
+        { "type": "response.function_call_arguments.done", "output_index": 0, "item_id": "fc_empty", "arguments": "{}" },
+        { "type": "response.output_item.done", "output_index": 0, "item": { "type": "function_call", "id": "fc_empty", "call_id": "call_empty", "name": "get_time", "arguments": "{}" } },
+        { "type": "response.completed", "response": { "status": "completed", "output": [ { "type": "function_call", "id": "fc_empty", "call_id": "call_empty", "name": "get_time", "arguments": "{}" } ] } }
+      ],
+      "expectedCalls": [ { "call_id": "call_empty", "name": "get_time", "arguments": "{}" } ]
+    },
+    {
+      "name": "工具名在参数完成时才出现",
+      "events": [
+        { "type": "response.output_item.added", "output_index": 0, "item": { "type": "function_call", "id": "fc_late", "call_id": "call_late", "name": "", "arguments": "" } },
+        { "type": "response.function_call_arguments.delta", "output_index": 0, "item_id": "fc_late", "delta": "{\"pattern\":\"中文\"}" },
+        { "type": "response.function_call_arguments.done", "output_index": 0, "item_id": "fc_late", "name": "grep", "arguments": "{\"pattern\":\"中文\"}" },
+        { "type": "response.output_item.done", "output_index": 0, "item": { "type": "function_call", "id": "fc_late", "call_id": "call_late", "name": "grep", "arguments": "{\"pattern\":\"中文\"}" } },
+        { "type": "response.completed", "response": { "status": "completed", "output": [ { "type": "function_call", "id": "fc_late", "call_id": "call_late", "name": "grep", "arguments": "{\"pattern\":\"中文\"}" } ] } }
+      ],
+      "expectedCalls": [ { "call_id": "call_late", "name": "grep", "arguments": "{\"pattern\":\"中文\"}" } ]
+    }
+  ]
+}

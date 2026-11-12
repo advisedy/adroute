@@ -1,0 +1,19 @@
+{
+  "name": "adroute-acceptance-dev",
+  "version": "0.7.1",
+  "private": true,
+  "description": "Development-only Playwright tests for the built AdRoute Go binary",
+  "type": "module",
+  "engines": {
+    "node": ">=20.18"
+  },
+  "scripts": {
+    "test": "npm run test:browser && npm run test:codex",
+    "test:browser": "node --test --test-concurrency=1 browser/*.test.js",
+    "test:codex": "node --test --test-concurrency=1 integration/go-codex.test.js",
+    "check": "node scripts/check.js"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1"
+  }
+}

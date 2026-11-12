@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "id": "pixel-swe-tools",
+  "version": "1.1.0",
+  "name": "Pixel SWE · 工具流与最终快照 v2",
+  "description": "实验适配：等待 response.completed 后发出工具调用，可能增加工具启动延迟；修复晚到工具名、唯一有名调用与匿名调用的拆分参数，并按稳定且唯一的 call_id 对齐最终快照重新生成的 item ID。身份/名称/参数冲突及多候选仍拒绝。已用真实 swe-2-max 响应离线回放；未完成修复后真实客户端工具执行及结果回传验证。不改角色、提示词、UA、DNS、TLS，不解决请求侧 502。要求 adroute 0.3.1 或更新版本。",
+  "engine": "responses-tools-v2",
+  "options": { "lateName": true, "splitCalls": true },
+  "fixtures": [
+    {
+      "name": "拆分参数加最终工具与 reasoning ID 重建",
+      "events": [
+        { "type": "response.output_item.added", "output_index": 0, "item": { "type": "reasoning", "id": "rs_stream", "status": "in_progress", "summary": [] } },
+        { "type": "response.output_item.done", "output_index": 0, "item": { "type": "reasoning", "id": "rs_stream", "status": "completed", "summary": [{ "type": "summary_text", "text": "Synthetic marker request." }] } },
+        { "type": "response.output_item.added", "output_index": 1, "item": { "type": "function_call", "id": "fc_stream", "call_id": "call_real", "name": "adroute_probe", "arguments": "" } },
+        { "type": "response.output_item.added", "output_index": 2, "item": { "type": "function_call", "id": "fc_ghost", "call_id": "call_ghost", "name": "", "arguments": "" } },
+        { "type": "response.function_call_arguments.delta", "output_index": 2, "item_id": "fc_ghost", "call_id": "call_ghost", "delta": "{\"marker\":" },
+        { "type": "response.function_call_arguments.delta", "output_index": 2, "item_id": "fc_ghost", "call_id": "call_ghost", "delta": "\"adroute-test\"}" },
+        { "type": "response.function_call_arguments.done", "output_index": 1, "item_id": "fc_stream", "call_id": "call_real", "name": "adroute_probe", "arguments": "{}" },
+        { "type": "response.output_item.done", "output_index": 1, "item": { "type": "function_call", "id": "fc_stream", "call_id": "call_real", "name": "adroute_probe", "arguments": "{}" } },
+        { "type": "response.function_call_arguments.done", "output_index": 2, "item_id": "fc_ghost", "call_id": "call_ghost", "arguments": "{\"marker\":\"adroute-test\"}" },
+        { "type": "response.output_item.done", "output_index": 2, "item": { "type": "function_call", "id": "fc_ghost", "call_id": "call_ghost", "name": "", "arguments": "{\"marker\":\"adroute-test\"}" } },
+        { "type": "response.completed", "response": { "status": "completed", "output": [
+          { "type": "reasoning", "id": "rs_final", "summary": [{ "type": "summary_text", "text": "Synthetic marker request." }] },
+          { "type": "function_call", "id": "fc_final", "call_id": "call_real", "name": "adroute_probe", "arguments": "{}" },
+          { "type": "function_call", "id": "fc_ghost_final", "call_id": "call_ghost", "arguments": "{\"marker\":\"adroute-test\"}" }
+        ] } }
+      ],
+      "expectedCalls": [{ "call_id": "call_real", "name": "adroute_probe", "arguments": "{\"marker\":\"adroute-test\"}" }]
+    },
+    {
+      "name": "声明先结束、幽灵参数晚到",
+      "events": [
+        { "type": "response.output_item.added", "output_index": 0, "item": { "type": "function_call", "id": "fc_real", "call_id": "call_real", "name": "exec_command", "arguments": "" } },
+        { "type": "response.output_item.done", "output_index": 0, "item": { "type": "function_call", "id": "fc_real", "call_id": "call_real", "name": "exec_command", "arguments": "{}" } },
+        { "type": "response.output_item.added", "output_index": 1, "item": { "type": "function_call", "id": "fc_ghost", "call_id": "call_ghost", "name": "", "arguments": "" } },
+        { "type": "response.function_call_arguments.delta", "output_index": 1, "item_id": "fc_ghost", "delta": "{\"cmd\":\"printf adapter-example\"}" },
+        { "type": "response.function_call_arguments.done", "output_index": 1, "item_id": "fc_ghost", "arguments": "{\"cmd\":\"printf adapter-example\"}" },
+        { "type": "response.output_item.done", "output_index": 1, "item": { "type": "function_call", "id": "fc_ghost", "call_id": "call_ghost", "name": "", "arguments": "{\"cmd\":\"printf adapter-example\"}" } },
+        { "type": "response.completed", "response": { "status": "completed", "output": [{ "type": "function_call", "id": "fc_real", "call_id": "call_real", "name": "exec_command", "arguments": "{}" }, { "type": "function_call", "id": "fc_ghost", "call_id": "call_ghost", "name": "", "arguments": "{\"cmd\":\"printf adapter-example\"}" }] } }
+      ],
+      "expectedCalls": [{ "call_id": "call_real", "name": "exec_command", "arguments": "{\"cmd\":\"printf adapter-example\"}" }]
+    },
+    {
+      "name": "合法无参数工具及最终 ID 变化",
+      "events": [
+        { "type": "response.output_item.added", "output_index": 0, "item": { "type": "function_call", "id": "fc_empty", "call_id": "call_empty", "name": "get_time", "arguments": "" } },
+        { "type": "response.function_call_arguments.delta", "output_index": 0, "item_id": "fc_empty", "delta": "{}" },
+        { "type": "response.function_call_arguments.done", "output_index": 0, "item_id": "fc_empty", "arguments": "{}" },
+        { "type": "response.output_item.done", "output_index": 0, "item": { "type": "function_call", "id": "fc_empty", "call_id": "call_empty", "name": "get_time", "arguments": "{}" } },
+        { "type": "response.completed", "response": { "status": "completed", "output": [{ "type": "function_call", "id": "fc_empty_final", "call_id": "call_empty", "name": "get_time", "arguments": "{}" }] } }
+      ],
+      "expectedCalls": [{ "call_id": "call_empty", "name": "get_time", "arguments": "{}" }]
+    },
+    {
+      "name": "工具名在参数完成时才出现",
+      "events": [
+        { "type": "response.output_item.added", "output_index": 0, "item": { "type": "function_call", "id": "fc_late", "call_id": "call_late", "name": "", "arguments": "" } },
+        { "type": "response.function_call_arguments.delta", "output_index": 0, "item_id": "fc_late", "delta": "{\"pattern\":\"中文\"}" },
+        { "type": "response.function_call_arguments.done", "output_index": 0, "item_id": "fc_late", "name": "grep", "arguments": "{\"pattern\":\"中文\"}" },
+        { "type": "response.output_item.done", "output_index": 0, "item": { "type": "function_call", "id": "fc_late", "call_id": "call_late", "name": "grep", "arguments": "{\"pattern\":\"中文\"}" } },
+        { "type": "response.completed", "response": { "status": "completed", "output": [{ "type": "function_call", "id": "fc_late", "call_id": "call_late", "name": "grep", "arguments": "{\"pattern\":\"中文\"}" }] } }
+      ],
+      "expectedCalls": [{ "call_id": "call_late", "name": "grep", "arguments": "{\"pattern\":\"中文\"}" }]
+    }
+  ]
+}

@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" id="theme-color-meta" content="#0a0a0a">
+  <title>AdRoute · 模型管理</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/theme.js"></script>
+  <script src="/compatibility-directory.js" defer></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+
+  <section id="auth-screen" class="auth-screen" aria-labelledby="auth-title" hidden>
+    <div class="auth-card">
+      <div class="brand-mark" aria-hidden="true">a<span>↗</span></div>
+      <p class="eyebrow">ADROUTE / LOCAL MODEL GATEWAY</p>
+      <h1 id="auth-title">你的模型，一个入口。</h1>
+      <p class="muted auth-description">添加模型，填写上游地址与密钥，用统一的本地地址调用。</p>
+      <form id="auth-form">
+        <label for="admin-token">管理令牌</label>
+        <input id="admin-token" name="token" type="password" autocomplete="off" spellcheck="false" required placeholder="输入服务启动时提供的管理令牌" aria-describedby="auth-help">
+        <p id="auth-help" class="field-help">运行 adroute start 可获取管理登录链接。</p>
+        <p id="auth-error" class="form-error" role="alert" hidden></p>
+        <button id="auth-submit" class="button primary auth-submit" type="submit">进入模型管理 <span aria-hidden="true">→</span></button>
+      </form>
+      <div class="auth-foot"><span class="status-dot"></span> 本地运行 · 手动控制 · 按需连接</div>
+    </div>
+  </section>
+
+  <div id="app-shell" class="app-shell" hidden>
+    <aside class="sidebar" aria-label="主导航">
+      <a class="brand" href="#" id="brand-home" aria-label="AdRoute 模型管理首页"><span class="brand-mark small" aria-hidden="true">a<span>↗</span></span><span>AdRoute<small>本地模型代理</small></span></a>
+      <p class="nav-label">工作空间</p>
+      <nav class="navigation">
+        <button class="nav-item selected" type="button" data-tab="models" aria-current="page"><span class="nav-icon" aria-hidden="true">▦</span>模型管理</button>
+        <button class="nav-item" type="button" data-tab="aggregates"><span class="nav-icon" aria-hidden="true">⛓</span>聚合</button>
+        <button class="nav-item" type="button" data-tab="requests"><span class="nav-icon" aria-hidden="true">≋</span>请求记录</button>
+        <button class="nav-item" type="button" data-tab="compatibility"><span class="nav-icon" aria-hidden="true">⇄</span>兼容修复</button>
+        <button class="nav-item" type="button" data-tab="setup"><span class="nav-icon code-icon" aria-hidden="true">&gt;_</span>客户端接入</button>
+      </nav>
+      <div class="sidebar-note"><span class="tiny-label">唯一对外身份</span><p><code>adroute/&lt;组名&gt;/&lt;模型名称&gt;</code></p><span class="local-badge"><span class="status-dot"></span> LOCAL FIRST</span></div>
+      <div class="sidebar-bottom"><span id="app-version">AdRoute</span><button id="logout-button" class="text-button" type="button">退出</button></div>
+    </aside>
+
+    <div class="workspace">
+      <header class="topbar">
+        <div class="breadcrumb">工作空间 <span aria-hidden="true">/</span> <span id="breadcrumb-title">模型管理</span></div>
+        <div class="topbar-actions"><span id="connection-status" class="connection-status" role="status"><span class="status-dot pending"></span>正在连接</span><button id="theme-toggle" class="button subtle small-button" type="button" data-theme-toggle aria-pressed="false" title="切换深色 / 浅色外观">浅色模式</button><button id="refresh-button" class="button subtle small-button" type="button">刷新状态</button></div>
+      </header>
+      <main id="main" tabindex="-1">
+        <div class="page-heading"><div><p class="eyebrow">YOUR MODELS. YOUR ROUTE.</p><h1 id="page-title">模型管理</h1><p id="page-description" class="muted">添加模型，保存它们自己的上游地址与密钥，通过统一的本地地址调用。</p></div><span class="heading-label">本地控制台</span></div>
+        <div id="global-error" class="notice error-notice" role="alert" hidden></div>
+        <div id="catalog-notice" class="notice warning-notice" role="status" hidden>
+          <p id="catalog-message"></p>
+          <button id="catalog-retry" class="button secondary small-button" type="button">重试发布目录</button>
+          <p id="catalog-status" class="field-help" role="status" hidden></p>
+        </div>
+        <div id="initial-loading" class="loading-panel" role="status"><span class="spinner"></span><span>正在读取模型配置…</span></div>
+        <div id="state-unavailable" class="empty-panel" hidden><span class="empty-icon" aria-hidden="true">↻</span><h2>暂时无法读取服务状态</h2><p class="muted">请确认本地服务正在运行，然后重试。</p><button id="retry-state" class="button secondary" type="button">重新连接</button></div>
+
+        <section id="models-panel" class="tab-panel" aria-label="模型管理" hidden>
+          <div class="toolbar">
+            <div id="group-filter" class="chips" role="group" aria-label="按模型组筛选"></div>
+            <div class="toolbar-actions">
+              <button id="add-model" class="button primary" type="button"><span aria-hidden="true">＋</span> 添加模型</button>
+              <button id="manage-groups" class="button secondary" type="button">管理组</button>
+              <button id="import-config" class="button secondary" type="button">导入配置</button>
+              <button id="export-config" class="button secondary" type="button" title="导出文件包含明文上游 API Key，请妥善保管">导出配置</button>
+              <input id="import-config-file" type="file" accept=".json,application/json" hidden>
+            </div>
+          </div>
+          <p class="field-help">导出文件包含明文上游 API Key，请妥善保管；导入会覆盖当前模型配置。</p>
+
+          <div class="section-heading"><div><h2>模型 <span id="model-count" class="count-badge">0</span></h2><p class="muted">按模型组展示；关闭模型不会删除其配置。点击测速会立即发送一次真实请求，可能产生少量费用或消耗额度。</p></div></div>
+          <div id="model-list" class="model-list"></div>
+
+          <div class="default-bar panel">
+            <div class="default-field">
+              <label for="default-model">网页默认模型</label>
+              <select id="default-model"></select>
+            </div>
+            <p class="field-help">可选。客户端仍可显式选择任意开放模型；<code>adroute/default</code> 只在默认模型开放时出现在目录里。</p>
+            <p id="default-status" class="field-help" role="status" hidden></p>
+          </div>
+
+          <section class="access-panel panel" aria-labelledby="access-heading">
+            <div class="access-head"><div><h2 id="access-heading">本地接入</h2><p class="muted">统一地址与代理密钥；上游地址和上游 API Key 属于每个模型自己。</p></div><span class="badge">Responses</span></div>
+            <div class="access-grid">
+              <div class="access-field">
+                <label for="client-base-url">本地 Base URL</label>
+                <div class="access-row"><input id="client-base-url" type="text" readonly autocomplete="off" spellcheck="false"><button id="copy-client-base-url" class="button subtle small-button" type="button">复制</button></div>
+              </div>
+              <div class="access-field">
+                <label for="client-api-key">本地代理密钥</label>
+                <div class="access-row"><input id="client-api-key" type="password" readonly autocomplete="off" spellcheck="false"><button id="toggle-client-api-key" class="button subtle small-button" type="button" aria-pressed="false">显示</button><button id="copy-client-api-key" class="button subtle small-button" type="button">复制</button></div>
+                <p class="field-help">这是本地代理密钥，不是模型的上游 API Key，也不是管理令牌。</p>
+              </div>
+            </div>
+            <p class="field-help">本地入口当前只提供 POST /v1/responses 与 GET /v1/models，不转换 Chat Completions 或 Anthropic 协议。</p>
+          </section>
+        </section>
+
+        <section id="aggregates-panel" class="tab-panel" aria-labelledby="aggregates-heading" hidden>
+          <div class="toolbar">
+            <div class="toolbar-actions">
+              <button id="add-aggregate" class="button primary" type="button"><span aria-hidden="true">＋</span> 新建聚合</button>
+            </div>
+          </div>
+          <div class="section-heading"><div><h2 id="aggregates-heading">聚合 <span id="aggregate-count" class="count-badge">0</span></h2><p class="muted">聚合是一串按顺序尝试的模型；某个成员连不上、超时或返回 429/5xx 时会自动换下一个，全部轮完才报错。客户端对聚合和模型用法完全相同，通过 <code>adroute/agg/&lt;名称&gt;</code> 调用。</p></div></div>
+          <div id="aggregate-list" class="aggregate-list"></div>
+        </section>
+
+        <section id="requests-panel" class="tab-panel" aria-labelledby="requests-heading" hidden>
+          <div class="section-heading"><div><h2 id="requests-heading">请求明细</h2><p class="muted">每 45 秒自动刷新，也可点击“刷新状态”。不保存对话正文。</p></div><label class="filter-label" for="request-filter">筛选<select id="request-filter"><option value="all">全部状态</option><option value="success">成功</option><option value="error">失败</option><option value="other">其他</option></select></label></div>
+          <div id="all-requests" class="panel request-container"></div>
+        </section>
+
+        <section id="setup-panel" class="tab-panel" aria-labelledby="setup-heading" hidden>
+          <div class="setup-intro panel"><div class="setup-step-number" aria-hidden="true">↗</div><div><h2 id="setup-heading">客户端接入与恢复</h2><p class="muted">运行 <code>adroute start</code> 会备份并合并 Codex 配置，再运行 <code>codex</code>。目录与模型选择来自上面保存的模型。</p></div></div>
+          <div id="setup-loading" class="loading-panel" role="status" hidden><span class="spinner"></span><span>正在获取本地接入配置…</span></div>
+          <div id="setup-error" class="notice error-notice" role="alert" hidden></div>
+          <button id="setup-retry" class="button secondary" type="button" hidden>重新获取配置</button>
+          <div id="setup-content" hidden>
+            <div class="setup-endpoint panel"><div><span class="tiny-label">本地代理地址</span><code id="setup-url"></code></div><button id="copy-proxy-url" class="button subtle small-button" type="button">复制地址</button></div>
+            <article class="setup-card panel"><div class="setup-card-heading"><div class="step-title"><span class="step-number">01</span><div><h3>启动并自动配置</h3><p class="muted"><code>adroute start</code> 会备份并合并 Codex 配置，沿用已有 <code>CODEX_HOME</code>；自动设置 <code>model = "adroute/default"</code> 和根级 <code>model_catalog_json</code>。目录位于 <code>ADROUTE_HOME/codex/models.json</code>。下方为自动配置预览。</p></div></div><button id="copy-config" class="button subtle small-button" type="button">复制配置</button></div><pre tabindex="0" aria-label="Codex 配置预览"><code id="codex-config"></code></pre></article>
+            <article class="setup-card panel"><div class="step-title"><span class="step-number">02</span><div><h3>在客户端选择模型</h3><p class="muted">客户端目录里的模型 ID 就是 <code>adroute/&lt;组名&gt;/&lt;模型名称&gt;</code>，显示名称为“组名 / 模型名称”；实际发给上游的是每个模型自己保存的真实模型 ID。关闭的模型不会进入目录，缓存了旧 ID 的客户端也会被拒绝。</p></div></div><button id="setup-back" class="button secondary" type="button">返回模型管理 <span aria-hidden="true">→</span></button></article>
+            <article class="setup-card panel"><div class="setup-card-heading"><div class="step-title"><span class="step-number">03</span><div><h3>OpenCode 显式同步</h3><p class="muted">只有你点击确认后，才会把当前开放的模型写入已有的 OpenCode AdRoute 配置；保存模型或切换开放状态不会自动写外部文件。</p></div></div><button id="opencode-sync" class="button secondary" type="button">同步到 OpenCode</button></div><p id="opencode-sync-status" class="field-help" role="status" hidden></p><p class="muted"><code>adroute stop</code> 会恢复仍由 AdRoute 管理的 Codex 设置并保留你的修改；也可运行 <code>adroute codex restore</code>。兼容 Codex CLI 0.156.0。</p></article>
+          </div>
+        </section>
+
+        <section id="compatibility-panel" class="tab-panel" aria-label="兼容修复" hidden>
+          <div class="notice warning-notice">实验功能，仅处理流式 Responses 工具事件。不会修复 DNS、鉴权或上游 502，不会改写提示词、关闭证书校验或执行导入脚本。</div>
+          <div id="compat-error" class="form-error" role="alert" hidden></div>
+          <section class="compat-section compat-guide panel">
+            <h2>1. 复制 Prompt，交给本地 AI</h2>
+            <ol class="compat-steps"><li>复制排查 Prompt，发给能访问本机文件的 AI，并说明报错。</li><li>AI 分析、验证后，将修复包直接保存到下方目录。</li><li>回来刷新修复包，选择具体模型和合格版本，点击“保存绑定”。</li></ol>
+            <div class="provider-actions"><button id="compat-copy-prompt" class="button primary" type="button">复制排查 Prompt</button><button id="adapter-refresh" class="button secondary" type="button">刷新修复包</button></div>
+            <p class="field-help">修复包目录：<code id="adapter-directory"></code></p><p id="compat-prompt-target" class="field-help"></p><p id="adapter-refresh-result" class="field-help" role="status"></p><p id="compat-prompt-status" class="compat-result" role="status"></p>
+            <details id="compat-prompt-view" class="compat-inline-details"><summary>查看 / 手动复制 Prompt</summary><label class="sr-only" for="compat-prompt-text">排查 Prompt 全文</label><textarea id="compat-prompt-text" class="compat-prompt-text" readonly spellcheck="false"></textarea></details>
+          </section>
+          <form id="compat-binding-form" class="compat-section panel">
+            <h2>2. 明确绑定模型</h2><p class="muted">绑定只针对一个已保存模型条目，不继承组或其他模型的设置。</p>
+            <label for="compat-model">目标模型</label><select id="compat-model" required></select>
+            <label for="compat-profile">现有合格修复包 / 版本</label><select id="compat-profile"></select><p id="compat-binding-help" class="field-help"></p><p class="field-help">列表中的包已通过本地验证，不代表真实上游已验证。刷新不会自动启用任何包。</p>
+            <div class="provider-actions"><button id="compat-save" class="button primary" type="submit">保存绑定</button><button id="compat-disable" class="button subtle" type="button">关闭此模型修复</button><button id="compat-structure-test" class="button secondary" type="button">工具结构测试</button></div><p id="compat-save-result" class="field-help" role="status"></p><p id="compat-structure-result" class="compat-result" role="status"></p>
+          </form>
+          <details id="adapter-manager" class="compat-section panel"><summary>修复包管理 <span id="adapter-count" class="count-badge"></span></summary><p class="field-help">查看版本、来源文件和绑定情况，清理异常或无用文件。已绑定版本需先解除绑定；同版本内容不允许覆盖。</p><div id="adapter-packages" class="compat-packages"></div><p class="field-help">只操作修复包目录内的文件，不递归删除。管理器不是 AI 的文件系统安全沙箱。</p></details>
+          <details id="diagnosis-details" class="compat-section panel">
+            <summary>高级：诊断与本地回放</summary><p class="muted">需要进一步排查时再展开。使用上方的具体模型，只取样下一次正常请求，不主动发推理；2 分钟停止，最多 256KB / 256 个事件。摘要默认不保存参数值。</p>
+            <label class="checkbox-label"><input id="diagnosis-raw" type="checkbox"><span>额外保留事件内容（可能包含代码、路径、命令和业务数据）</span></label><label class="checkbox-label"><input id="diagnosis-consent" type="checkbox"><span>我已审查风险，同意在本机私有文件暂存；分享前会再次审查。</span></label>
+            <div class="provider-actions"><button id="diagnosis-arm" class="button secondary" type="button">采集下一次匹配请求</button><button id="diagnosis-stop" class="button subtle" type="button">停止并清除诊断</button><button id="diagnosis-view" class="button subtle" type="button">预览诊断</button></div>
+            <p id="diagnosis-status" class="compat-result" role="status">未开启</p><pre id="diagnosis-preview" class="compat-preview" tabindex="0" aria-label="诊断导出预览"></pre>
+            <label class="checkbox-label"><input id="diagnosis-export-consent" type="checkbox"><span>我已审查上面的内容，允许导出或交给本地 AI 读取。已知密钥脱敏不代表绝对安全。</span></label><p class="field-help">确认后重新点击上方“复制排查 Prompt”，才会附上本次可用诊断的本机路径。</p>
+            <div class="provider-actions"><button id="diagnosis-download" class="button secondary" type="button" disabled>导出已预览诊断</button><button id="diagnosis-replay" class="button subtle" type="button">用选中修复包回放诊断</button></div><pre id="diagnosis-replay-result" class="compat-preview" tabindex="0" aria-label="诊断本地回放结果"></pre><p class="field-help">配置通过 ≠ 本地样例通过 ≠ 真实工具往返通过。回放不执行工具，真实模型请求需要额外确认用量。</p>
+          </details>
+        </section>
+
+        <footer class="page-footer"><span>AdRoute · 让每一次选择都明确</span><span>本地模型代理</span></footer>
+      </main>
+    </div>
+  </div>
+
+  <dialog id="model-dialog" class="dialog wide-dialog" aria-labelledby="model-dialog-title">
+    <form id="model-form">
+      <div class="dialog-heading"><div><p class="eyebrow">MODEL ENTRY</p><h2 id="model-dialog-title">添加模型</h2></div><button class="icon-button" type="button" data-close-dialog="model-dialog" aria-label="关闭模型表单">×</button></div>
+      <div class="dialog-body">
+        <p class="muted dialog-intro">一个模型保存自己的上游 Base URL、上游 API Key 和真实模型 ID；组只用于分类。</p>
+        <div class="field-row two">
+          <div class="field">
+            <label for="model-group">所属组 <span class="required-text">必填</span></label>
+            <select id="model-group" required></select>
+            <p class="field-error" id="model-error-group" role="alert" hidden></p>
+          </div>
+          <div class="field">
+            <label for="model-new-group">新建组</label>
+            <div class="inline-row"><input id="model-new-group" type="text" autocomplete="off" spellcheck="false" placeholder="例如 work" maxlength="48"><button id="model-create-group" class="button subtle small-button" type="button">创建</button></div>
+            <p class="field-help">小写英文字母、数字和单个连字符；不接受中文或空格。</p>
+            <p class="field-error" id="model-error-newgroup" role="alert" hidden></p>
+          </div>
+        </div>
+        <label for="model-base-url">上游 Base URL <span class="required-text">必填</span></label>
+        <input id="model-base-url" type="url" required placeholder="https://example.invalid/v1" autocomplete="off" spellcheck="false">
+        <p class="field-error" id="model-error-baseurl" role="alert" hidden></p>
+        <label for="model-api-key">上游 API Key <span class="required-text" id="model-api-key-required">必填</span></label>
+        <div class="inline-row">
+          <input id="model-api-key" type="password" autocomplete="off" spellcheck="false" placeholder="输入上游 API Key">
+          <button id="model-api-key-toggle" class="button subtle small-button" type="button" aria-pressed="false">显示</button>
+        </div>
+        <p id="model-api-key-help" class="field-help">保存后默认遮蔽；留空编辑表示保留已保存的密钥。</p>
+        <p class="field-error" id="model-error-apikey" role="alert" hidden></p>
+        <label for="model-real-id">上游真实模型 ID <span class="required-text">必填</span></label>
+        <div class="inline-row"><input id="model-real-id" type="text" required maxlength="256" autocomplete="off" spellcheck="false" placeholder="例如 vendor/model"><button id="model-discover" class="button subtle small-button" type="button">获取模型</button></div>
+        <p class="field-help">原样发给上游，可以包含 <code>/</code> 和大小写；它与下面用于对外展示的模型名称不同。</p>
+        <p class="field-error" id="model-error-realid" role="alert" hidden></p>
+        <section id="model-discover-region" class="model-discovery" aria-label="上游模型列表" hidden><p id="model-discover-status" class="field-help" role="status"></p><label class="sr-only" for="model-discover-search">搜索发现的模型</label><input id="model-discover-search" type="search" placeholder="搜索模型 ID…" autocomplete="off" hidden><div id="model-discover-results" class="model-results"></div></section>
+        <label for="model-name">模型名称 <span class="required-text">必填</span></label>
+        <input id="model-name" type="text" required maxlength="100" autocomplete="off" spellcheck="false" placeholder="例如 coding">
+        <p class="field-help">对外模型 ID 为 <code id="model-route-preview">adroute/组名/模型名称</code>。只能使用英文字母、数字、点、下划线和连字符。</p>
+        <p class="field-error" id="model-error-name" role="alert" hidden></p>
+        <label for="model-website">网站 <span class="required-text">可选</span></label>
+        <input id="model-website" type="url" maxlength="2048" autocomplete="off" spellcheck="false" placeholder="https://example.com">
+        <p class="field-help">该模型的官网或介绍页地址；填写后模型列表会出现“打开网站”按钮。</p>
+        <p class="field-error" id="model-error-website" role="alert" hidden></p>
+        <label class="checkbox-label" id="model-open-row"><input id="model-open" type="checkbox" checked><span>保存后对外开放</span></label>
+        <p id="model-error" class="form-error" role="alert" hidden></p>
+      </div>
+      <div class="dialog-footer end"><button class="button secondary" type="button" data-close-dialog="model-dialog">取消</button><button id="model-save" class="button primary" type="submit">保存模型</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="aggregate-dialog" class="dialog wide-dialog" aria-labelledby="aggregate-dialog-title">
+    <form id="aggregate-form">
+      <div class="dialog-heading"><div><p class="eyebrow">FAILOVER CHAIN</p><h2 id="aggregate-dialog-title">新建聚合</h2></div><button class="icon-button" type="button" data-close-dialog="aggregate-dialog" aria-label="关闭聚合表单">×</button></div>
+      <div class="dialog-body">
+        <p class="muted dialog-intro">聚合按成员顺序依次尝试；某个成员连不上、超时或返回 429/5xx 时自动换下一个。最多 8 个成员、最多 10 轮重试。</p>
+        <label for="aggregate-name">聚合名称 <span class="required-text">必填</span></label>
+        <input id="aggregate-name" type="text" required maxlength="100" autocomplete="off" spellcheck="false" placeholder="例如 coding-failover">
+        <p class="field-help">对外模型 ID 为 <code id="aggregate-route-preview">adroute/agg/&lt;名称&gt;</code>。只能使用英文字母、数字、点、下划线和连字符。</p>
+        <p class="field-error" id="aggregate-error-name" role="alert" hidden></p>
+
+        <div class="aggregate-members-head">
+          <label>成员顺序 <span class="required-text">必填</span></label>
+          <p class="field-help">排在前面的成员优先尝试；关闭的成员会在请求时自动跳过。</p>
+        </div>
+        <div id="aggregate-members" class="aggregate-members"></div>
+        <button id="aggregate-add-member" class="button subtle small-button" type="button">＋ 添加成员</button>
+        <p class="field-error" id="aggregate-error-members" role="alert" hidden></p>
+
+        <label for="aggregate-rounds">重试轮数</label>
+        <input id="aggregate-rounds" type="number" min="1" max="10" step="1" autocomplete="off" spellcheck="false" placeholder="5">
+        <p class="field-help">1~10 之间的整数，默认 5。全部成员轮完一轮会从头再来；达到轮数上限后返回最后一次失败。</p>
+        <p class="field-error" id="aggregate-error-rounds" role="alert" hidden></p>
+
+        <label class="checkbox-label" id="aggregate-open-row"><input id="aggregate-open" type="checkbox" checked><span>保存后对外开放</span></label>
+        <p id="aggregate-error" class="form-error" role="alert" hidden></p>
+      </div>
+      <div class="dialog-footer end"><button class="button secondary" type="button" data-close-dialog="aggregate-dialog">取消</button><button id="aggregate-save" class="button primary" type="submit">保存聚合</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="groups-dialog" class="dialog" aria-labelledby="groups-title">
+    <div class="dialog-heading"><div><p class="eyebrow">MODEL GROUPS</p><h2 id="groups-title">管理模型组</h2></div><button class="icon-button" type="button" data-close-dialog="groups-dialog" aria-label="关闭组管理">×</button></div>
+    <div class="dialog-body">
+      <p class="field-help">组只是分类，不保存地址或凭据。改组名会让该组模型的对外 ID 失效，客户端需要重新选择。只有空组可以删除。</p>
+      <form id="group-create-form" class="inline-row"><label class="sr-only" for="group-new-name">新组名称</label><input id="group-new-name" maxlength="48" autocomplete="off" spellcheck="false" placeholder="例如 work"><button id="group-create-submit" class="button primary small-button" type="submit">新建组</button></form>
+      <p class="field-error" id="groups-error" role="alert" hidden></p>
+      <div id="group-list" class="group-list"></div>
+    </div>
+    <div class="dialog-footer end"><button class="button secondary" type="button" data-close-dialog="groups-dialog">关闭</button></div>
+  </dialog>
+
+  <dialog id="import-dialog" class="dialog" aria-labelledby="import-title">
+    <div class="dialog-heading"><div><p class="eyebrow">IMPORT CONFIGURATION</p><h2 id="import-title">确认导入配置？</h2></div><button class="icon-button" type="button" data-close-dialog="import-dialog" aria-label="关闭导入确认">×</button></div>
+    <div class="dialog-body"><p>导入将覆盖当前所有模型、分组、默认模型和兼容修复绑定，无法撤销。建议先导出当前配置作为备份。</p><p class="field-help">本机管理令牌和代理密钥不会改变。导入文件包含明文上游 API Key，请妥善保管。</p><p id="import-error" class="form-error" role="alert" hidden></p></div>
+    <div class="dialog-footer end"><button class="button secondary" type="button" data-close-dialog="import-dialog" autofocus>取消</button><button id="import-confirm" class="button danger" type="button">确认覆盖并导入</button></div>
+  </dialog>
+
+  <dialog id="delete-dialog" class="dialog" aria-labelledby="delete-title">
+    <form id="delete-form">
+      <div class="dialog-heading"><div><p class="eyebrow">REMOVE MODEL</p><h2 id="delete-title">确认删除？</h2></div><button class="icon-button" type="button" data-close-dialog="delete-dialog" aria-label="关闭删除确认">×</button></div>
+      <div class="dialog-body"><p>将删除模型 <strong id="delete-model-name"></strong>。</p><p class="field-help">对外模型 ID：<code id="delete-model-route"></code>。删除后该 ID 会明确报错，不会回退到其他模型。</p><p id="delete-default-warning" class="notice warning-notice" hidden>这是当前网页默认模型，删除后会清空默认，不会自动选择其他模型。</p><p id="delete-error" class="form-error" role="alert" hidden></p></div>
+      <div class="dialog-footer end"><button class="button secondary" type="button" data-close-dialog="delete-dialog" autofocus>取消</button><button id="delete-submit" class="button danger" type="submit">确认删除</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="request-dialog" class="dialog wide-dialog" aria-labelledby="request-title"><div class="dialog-heading"><div><p class="eyebrow">REQUEST DETAIL</p><h2 id="request-title">请求详情</h2></div><button class="icon-button" type="button" data-close-dialog="request-dialog" aria-label="关闭请求详情">×</button></div><div class="dialog-body"><dl class="request-meta"><dt>时间</dt><dd id="request-meta-time"></dd><dt>模型组</dt><dd id="request-meta-group"></dd><dt>对外 ID</dt><dd id="request-meta-route" class="mono"></dd><dt>真实模型 ID</dt><dd id="request-meta-model" class="mono"></dd><dt>档位</dt><dd id="request-meta-effort"></dd><dt>状态</dt><dd id="request-meta-status"></dd><dt>耗时</dt><dd id="request-meta-duration"></dd></dl><pre id="request-detail-body" class="request-detail-pre" tabindex="0"></pre></div><div class="dialog-footer end"><button class="button secondary" type="button" data-close-dialog="request-dialog">关闭</button></div></dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <noscript><div class="noscript-message">AdRoute 控制台需要启用 JavaScript。请启用后刷新页面。</div></noscript>
+</body>
+</html>

@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "id": "pixel-swe-tools",
+  "version": "1.2.0",
+  "name": "Pixel SWE · 工具与显式文本通道 v3",
+  "description": "实验适配，要求 adroute 0.3.5。保留 v2 的工具身份校验，只在正文中存在一个完整且不含歧义的 <|close|>think<|sep|><|open|>response<|sep|> 边界时移除前缀。整个响应暂存到成功完成才释放正文和工具（最多 4MB/5 分钟）；重复、不完整、引用中的标记，文本快照冲突及不支持的注释偏移明确失败。普通文本与标准 reasoning 保持分离，不按语言猜测，不改写请求或工具参数。仅合成测试与既有客户端文本离线验证；没有新的真实模型请求，未验证线上生效。",
+  "engine": "responses-tools-v3",
+  "options": { "lateName": true, "splitCalls": true },
+  "fixtures": [
+    {
+      "name": "显式思考前缀不进入正文及最终快照",
+      "events": [
+        { "type": "response.output_item.added", "output_index": 0, "item": { "type": "message", "id": "msg_probe", "role": "assistant", "status": "in_progress", "content": [] } },
+        { "type": "response.output_text.delta", "output_index": 0, "item_id": "msg_probe", "content_index": 0, "delta": "SYNTHETIC_PRIVATE_PREFIX<|close|>think<|se" },
+        { "type": "response.output_text.delta", "output_index": 0, "item_id": "msg_probe", "content_index": 0, "delta": "p|><|open|>response<|sep|>答复标记。" },
+        { "type": "response.output_text.done", "output_index": 0, "item_id": "msg_probe", "content_index": 0, "text": "SYNTHETIC_PRIVATE_PREFIX<|close|>think<|sep|><|open|>response<|sep|>答复标记。" },
+        { "type": "response.output_item.done", "output_index": 0, "item": { "type": "message", "id": "msg_probe", "role": "assistant", "status": "completed", "content": [{ "type": "output_text", "text": "SYNTHETIC_PRIVATE_PREFIX<|close|>think<|sep|><|open|>response<|sep|>答复标记。", "annotations": [] }] } },
+        { "type": "response.completed", "response": { "status": "completed", "output": [{ "type": "message", "id": "msg_final", "role": "assistant", "status": "completed", "content": [{ "type": "output_text", "text": "SYNTHETIC_PRIVATE_PREFIX<|close|>think<|sep|><|open|>response<|sep|>答复标记。", "annotations": [] }] }] } }
+      ],
+      "expectedCalls": [],
+      "expectedTexts": ["答复标记。"]
+    },
+    {
+      "name": "正常推理通道与中英文正文保持分离",
+      "events": [
+        { "type": "response.output_item.added", "output_index": 0, "item": { "type": "reasoning", "id": "rs_normal", "status": "in_progress", "summary": [] } },
+        { "type": "response.reasoning_summary_text.delta", "output_index": 0, "item_id": "rs_normal", "summary_index": 0, "delta": "SYNTHETIC_SUMMARY" },
+        { "type": "response.output_item.done", "output_index": 0, "item": { "type": "reasoning", "id": "rs_normal", "status": "completed", "summary": [{ "type": "summary_text", "text": "SYNTHETIC_SUMMARY" }] } },
+        { "type": "response.output_item.added", "output_index": 1, "item": { "type": "message", "id": "msg_normal", "role": "assistant", "status": "in_progress", "content": [] } },
+        { "type": "response.output_text.delta", "output_index": 1, "item_id": "msg_normal", "content_index": 0, "delta": "I need this sentence in the answer. 正常正文。" },
+        { "type": "response.output_item.done", "output_index": 1, "item": { "type": "message", "id": "msg_normal", "role": "assistant", "status": "completed", "content": [{ "type": "output_text", "text": "I need this sentence in the answer. 正常正文。", "annotations": [] }] } },
+        { "type": "response.completed", "response": { "status": "completed", "output": [{ "type": "reasoning", "id": "rs_normal", "status": "completed", "summary": [{ "type": "summary_text", "text": "SYNTHETIC_SUMMARY" }] }, { "type": "message", "id": "msg_normal", "role": "assistant", "status": "completed", "content": [{ "type": "output_text", "text": "I need this sentence in the answer. 正常正文。", "annotations": [] }] }] } }
+      ],
+      "expectedCalls": [],
+      "expectedTexts": ["I need this sentence in the answer. 正常正文。"]
+    },
+    {
+      "name": "拆分工具及最终 ID 变化仍保留真实 call_id",
+      "events": [
+        { "type": "response.output_item.added", "output_index": 0, "item": { "type": "function_call", "id": "fc_real", "call_id": "call_real", "name": "adroute_probe", "arguments": "" } },
+        { "type": "response.output_item.added", "output_index": 1, "item": { "type": "function_call", "id": "fc_ghost", "call_id": "call_ghost", "name": "", "arguments": "" } },
+        { "type": "response.function_call_arguments.delta", "output_index": 1, "item_id": "fc_ghost", "delta": "{\"marker\":\"adroute-test\"}" },
+        { "type": "response.function_call_arguments.done", "output_index": 0, "item_id": "fc_real", "arguments": "{}" },
+        { "type": "response.output_item.done", "output_index": 0, "item": { "type": "function_call", "id": "fc_real", "call_id": "call_real", "name": "adroute_probe", "arguments": "{}" } },
+        { "type": "response.function_call_arguments.done", "output_index": 1, "item_id": "fc_ghost", "arguments": "{\"marker\":\"adroute-test\"}" },
+        { "type": "response.output_item.done", "output_index": 1, "item": { "type": "function_call", "id": "fc_ghost", "call_id": "call_ghost", "name": "", "arguments": "{\"marker\":\"adroute-test\"}" } },
+        { "type": "response.completed", "response": { "status": "completed", "output": [{ "type": "function_call", "id": "fc_real_final", "call_id": "call_real", "name": "adroute_probe", "arguments": "{}" }, { "type": "function_call", "id": "fc_ghost_final", "call_id": "call_ghost", "name": "", "arguments": "{\"marker\":\"adroute-test\"}" }] } }
+      ],
+      "expectedCalls": [{ "call_id": "call_real", "name": "adroute_probe", "arguments": "{\"marker\":\"adroute-test\"}" }],
+      "expectedTexts": []
+    }
+  ]
+}

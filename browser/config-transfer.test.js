@@ -1,0 +1,35 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { expect } from '@playwright/test';
+import { goBrowserFixture, goSavedModel } from './go-fixture.js';
+
+test('exports and restores model configuration after explicit confirmation', async t => {
+  const f = await goBrowserFixture(t);
+  await goSavedModel(f, { group: 'work', name: 'coding', key: 'secret-test-key', isDefault: true });
+  await f.login();
+  await expect(f.page.locator('#export-config')).toBeVisible();
+  const [download] = await Promise.all([f.page.waitForEvent('download'), f.page.locator('#export-config').click()]);
+  const chunks = [];
+  for await (const chunk of await download.createReadStream()) chunks.push(chunk);
+  const content = Buffer.concat(chunks);
+  assert.match(content.toString(), /secret-test-key/);
+  await goSavedModel(f, { group: 'other', name: 'later' });
+  await f.page.locator('#refresh-button').click();
+  await expect(f.page.getByText('other', { exact: true }).first()).toBeVisible();
+  await f.page.locator('#import-config-file').setInputFiles({ name: 'bad.json', mimeType: 'application/json', buffer: Buffer.from('bad') });
+  await expect(f.page.locator('#global-error')).toContainText('JSON');
+  assert.equal((await f.state()).models.length, 2);
+  await f.page.locator('#import-config-file').setInputFiles({ name: 'backup.json', mimeType: 'application/json', buffer: content });
+  await f.page.locator('#import-dialog [data-close-dialog="import-dialog"]').first().click();
+  assert.equal((await f.state()).models.length, 2);
+  await f.page.locator('#import-config-file').setInputFiles({ name: 'backup.json', mimeType: 'application/json', buffer: content });
+  await expect(f.page.locator('#import-dialog')).toBeVisible();
+  await expect(f.page.locator('#import-dialog')).toContainText('覆盖');
+  await f.page.locator('#import-confirm').click();
+  await expect(f.page.locator('#import-dialog')).toBeHidden();
+  await expect.poll(async () => (await f.state()).models.length).toBe(1);
+  const restored = await f.state();
+  assert.equal(restored.models[0].apiKey, 'secret-test-key');
+  assert.equal(restored.models[0].baseUrl, 'https://synthetic.invalid/v1');
+  assert.equal(restored.defaultModelId, restored.models[0].id);
+});
