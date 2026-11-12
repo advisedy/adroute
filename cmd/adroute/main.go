@@ -3,6 +3,7 @@ package main
 import (
 	root "adroute"
 	a "adroute/internal/adroute"
+	"adroute/internal/platform"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -21,7 +22,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -124,7 +124,7 @@ func run(args []string) error {
 		var foregroundSignals chan os.Signal
 		if *foreground {
 			foregroundSignals = make(chan os.Signal, 1)
-			signal.Notify(foregroundSignals, syscall.SIGINT, syscall.SIGTERM)
+			signal.Notify(foregroundSignals, platform.Signals()...)
 			defer signal.Stop(foregroundSignals)
 		}
 		if name == "restart" {
@@ -284,17 +284,14 @@ func withControl(fn func() error) error {
 	if e := os.MkdirAll(p.Run, 0700); e != nil {
 		return e
 	}
-	_ = os.Chmod(p.Run, 0700)
-	fd, e := syscall.Open(filepath.Join(p.Run, "control.guard"), syscall.O_CREAT|syscall.O_RDWR|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0600)
+	if e := platform.Chmod(p.Run, 0700); e != nil {
+		return e
+	}
+	f, e := platform.Lock(filepath.Join(p.Run, "control.guard"))
 	if e != nil {
 		return e
 	}
-	f := os.NewFile(uintptr(fd), "control.guard")
 	defer f.Close()
-	if e = syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB); e != nil {
-		return fmt.Errorf("另一个 adroute 启停操作正在进行，请稍后重试")
-	}
-	defer syscall.Flock(fd, syscall.LOCK_UN)
 	return fn()
 }
 func readState() (serviceState, error) {
@@ -304,10 +301,10 @@ func readState() (serviceState, error) {
 	if e != nil {
 		return s, e
 	}
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0077 != 0 {
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || !platform.PrivateFile(path, info) {
 		return s, fmt.Errorf("unsafe state file")
 	}
-	if sys, ok := info.Sys().(*syscall.Stat_t); !ok || sys.Nlink != 1 {
+	if sys, err := platform.Lstat(path); err != nil || sys.Nlink != 1 {
 		return s, fmt.Errorf("unsafe state file")
 	}
 	b, e := os.ReadFile(path)
@@ -331,6 +328,11 @@ func writePrivate(path string, v any) error {
 	if e != nil {
 		return e
 	}
+	if e = platform.ChmodFile(f, 0600); e != nil {
+		f.Close()
+		os.Remove(tmp)
+		return e
+	}
 	if _, e = f.Write(b); e == nil {
 		e = f.Sync()
 	}
@@ -346,12 +348,7 @@ func writePrivate(path string, v any) error {
 		_ = os.Remove(tmp)
 		return e
 	}
-	d, e := os.Open(filepath.Dir(path))
-	if e == nil {
-		e = d.Sync()
-		_ = d.Close()
-	}
-	return e
+	return platform.SyncDir(path)
 }
 func localHealth(s serviceState, tokens a.Tokens) (statusResult, bool) {
 	var out statusResult
@@ -395,7 +392,7 @@ func getStatus() statusResult {
 	if result, ok := localHealth(s, tokens); ok {
 		return result
 	}
-	if syscall.Kill(s.PID, 0) == nil || errors.Is(syscall.Kill(s.PID, 0), syscall.EPERM) {
+	if platform.ProcessAlive(s.PID) {
 		return statusResult{Uncertain: true, Reason: "记录中的进程仍存在，但服务身份或健康状态无法确认；为避免误操作，未发送停止信号。"}
 	}
 	return statusResult{}
@@ -454,10 +451,10 @@ func start(portArg string, foreground bool) (started, error) {
 			return e
 		}
 		if info, e := os.Lstat(p.Log); e == nil {
-			if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0077 != 0 {
+			if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || !platform.PrivateFile(p.Log, info) {
 				return fmt.Errorf("日志路径必须是普通文件")
 			}
-			if sys, ok := info.Sys().(*syscall.Stat_t); !ok || sys.Nlink != 1 {
+			if sys, err := platform.Lstat(p.Log); err != nil || sys.Nlink != 1 {
 				return fmt.Errorf("日志路径必须是独占普通文件")
 			}
 			if info.Size() > 5<<20 {
@@ -470,7 +467,10 @@ func start(portArg string, foreground bool) (started, error) {
 		if e != nil {
 			return e
 		}
-		_ = log.Chmod(0600)
+		if e = platform.ChmodFile(log, 0600); e != nil {
+			log.Close()
+			return e
+		}
 		exe, e := os.Executable()
 		if e != nil {
 			log.Close()
@@ -481,7 +481,7 @@ func start(portArg string, foreground bool) (started, error) {
 		cmd.Stdin = nil
 		cmd.Stdout = log
 		cmd.Stderr = log
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		platform.Detach(cmd)
 		e = cmd.Start()
 		_ = log.Close()
 		if e != nil {
@@ -503,7 +503,7 @@ func start(portArg string, foreground bool) (started, error) {
 			}
 			time.Sleep(100 * time.Millisecond)
 		}
-		_ = cmd.Process.Signal(syscall.SIGTERM)
+		_ = platform.StopChild(cmd.Process)
 		return fmt.Errorf("服务启动失败或启动超时；可能是端口占用，请检查日志：%s", p.Log)
 	})
 	return out, e
@@ -589,7 +589,7 @@ func serve() error {
 		return e
 	}
 	sig := make(chan os.Signal, 2)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sig, platform.Signals()...)
 	select {
 	case <-sig:
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

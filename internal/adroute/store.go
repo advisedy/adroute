@@ -1,6 +1,7 @@
 package adroute
 
 import (
+	"adroute/internal/platform"
 	"bytes"
 	"crypto/rand"
 	"crypto/subtle"
@@ -136,7 +137,7 @@ func atomicWrite(path string, b []byte) error {
 	}
 	tmp := f.Name()
 	defer os.Remove(tmp)
-	if err = f.Chmod(0600); err != nil {
+	if err = platform.ChmodFile(f, 0600); err != nil {
 		_ = f.Close()
 		return err
 	}
@@ -154,12 +155,7 @@ func atomicWrite(path string, b []byte) error {
 	if err = os.Rename(tmp, path); err != nil {
 		return err
 	}
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	return d.Sync()
+	return platform.SyncDir(path)
 }
 func privateDirectory(path string) error {
 	info, err := os.Lstat(path)
@@ -178,7 +174,7 @@ func privateDirectory(path string) error {
 	if err != nil || !os.SameFile(info, opened) || !opened.IsDir() {
 		return fmt.Errorf("data directory changed while opening")
 	}
-	return f.Chmod(0700)
+	return platform.ChmodFile(f, 0700)
 }
 func readPrivateFile(path string) ([]byte, error) {
 	info, err := os.Lstat(path)
@@ -197,7 +193,7 @@ func readPrivateFile(path string) ([]byte, error) {
 	if err != nil || !os.SameFile(info, opened) || !opened.Mode().IsRegular() {
 		return nil, fmt.Errorf("data file changed while opening")
 	}
-	if err = f.Chmod(0600); err != nil {
+	if err = platform.ChmodFile(f, 0600); err != nil {
 		return nil, err
 	}
 	return io.ReadAll(f)

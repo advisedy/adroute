@@ -10,3 +10,5 @@ test-results/
 /.go-codex-test-homes/
 __pycache__/
 *.py[cod]
+/dist/
+/bin/adroute.exe

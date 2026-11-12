@@ -1,6 +1,7 @@
 package adroute
 
 import (
+	"adroute/internal/platform"
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,7 +13,6 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -418,18 +418,17 @@ func (d *Diagnostics) Handoff(route Route, captureID string) (*DiagnosticHandoff
 	return &DiagnosticHandoff{Path: c.path, CaptureID: c.CaptureID, SHA256: hash, Replayable: len(c.frames) > 0}, nil
 }
 func readDiagnosticCapture(path string) ([]byte, error) {
-	fd, e := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	f, e := platform.OpenFile(path, os.O_RDONLY, 0)
 	if e != nil {
 		return nil, e
 	}
-	f := os.NewFile(uintptr(fd), path)
 	defer f.Close()
 	st, e := f.Stat()
 	if e != nil {
 		return nil, e
 	}
-	meta, ok := st.Sys().(*syscall.Stat_t)
-	if !ok || !st.Mode().IsRegular() || meta.Nlink != 1 || st.Size() > 4*1024*1024 {
+	meta, statErr := platform.Stat(f)
+	if statErr != nil || !st.Mode().IsRegular() || meta.Nlink != 1 || st.Size() > 4*1024*1024 {
 		return nil, fmt.Errorf("unsafe diagnostic capture")
 	}
 	b, e := io.ReadAll(io.LimitReader(f, 4*1024*1024+1))
@@ -462,11 +461,10 @@ func (d *Diagnostics) eraseFilesLocked() error {
 	if !before.IsDir() || before.Mode()&os.ModeSymlink != 0 {
 		return appError("unsafe diagnostics directory", 409, "DIAGNOSIS_DIRECTORY_UNSAFE")
 	}
-	fd, e := syscall.Open(d.home, syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
+	root, e := platform.OpenFile(d.home, os.O_RDONLY, 0)
 	if e != nil {
 		return e
 	}
-	root := os.NewFile(uintptr(fd), d.home)
 	defer root.Close()
 	after, e := root.Stat()
 	if e != nil || !os.SameFile(before, after) || !after.IsDir() {

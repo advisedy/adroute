@@ -5,6 +5,7 @@ package adroute
 // unstable AST supplies exact token offsets. Edits replace only owned value
 // ranges or insert a key at an AST-selected table boundary.
 import (
+	"adroute/internal/platform"
 	"bytes"
 	"crypto/rand"
 	"encoding/hex"
@@ -18,7 +19,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	toml "github.com/pelletier/go-toml/v2"
@@ -1069,7 +1069,7 @@ func ensurePrivateDirectory(path string) error {
 	if e != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return errors.New("unsafe private directory")
 	}
-	if e = os.Chmod(path, 0700); e != nil {
+	if e = platform.Chmod(path, 0700); e != nil {
 		return e
 	}
 	return nil
@@ -1087,21 +1087,20 @@ type codexTextSnapshot struct {
 }
 
 func readSafeText(path string) (codexTextSnapshot, error) {
-	fd, e := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-	if e == syscall.ENOENT {
+	f, e := platform.OpenFile(path, os.O_RDONLY, 0)
+	if os.IsNotExist(e) {
 		return codexTextSnapshot{}, nil
 	}
 	if e != nil {
 		return codexTextSnapshot{}, codexProblem("CODEX_CONFIG_UNREADABLE", "Codex config cannot be safely opened")
 	}
-	f := os.NewFile(uintptr(fd), path)
 	defer f.Close()
 	st, e := f.Stat()
 	if e != nil {
 		return codexTextSnapshot{}, codexProblem("CODEX_CONFIG_UNREADABLE", "Codex config cannot be safely read")
 	}
-	stat, ok := st.Sys().(*syscall.Stat_t)
-	if !st.Mode().IsRegular() || !ok || stat.Nlink != 1 || st.Size() > codexConfigLimit {
+	stat, statErr := platform.Stat(f)
+	if !st.Mode().IsRegular() || statErr != nil || stat.Nlink != 1 || st.Size() > codexConfigLimit {
 		return codexTextSnapshot{}, codexProblem("CODEX_CONFIG_INVALID", "Codex config must be a regular file under 2 MB")
 	}
 	b, e := io.ReadAll(io.LimitReader(f, codexConfigLimit+1))
@@ -1112,11 +1111,11 @@ func readSafeText(path string) (codexTextSnapshot, error) {
 	if e != nil {
 		return codexTextSnapshot{}, codexProblem("CODEX_CONFIG_UNREADABLE", "Codex config cannot be safely read")
 	}
-	as, ok := after.Sys().(*syscall.Stat_t)
-	if !ok || stat.Dev != as.Dev || stat.Ino != as.Ino || stat.Size != as.Size || stat.Mtim != as.Mtim || stat.Ctim != as.Ctim {
+	as, statErr := platform.Stat(f)
+	if statErr != nil || stat != as || after.Size() != st.Size() {
 		return codexTextSnapshot{}, codexProblem("CODEX_CONFIG_CHANGED", "Codex config changed during read")
 	}
-	return codexTextSnapshot{exists: true, text: string(b), dev: uint64(stat.Dev), ino: stat.Ino, nlink: uint64(stat.Nlink), size: st.Size(), mtime: stat.Mtim.Sec*1e9 + stat.Mtim.Nsec, ctime: stat.Ctim.Sec*1e9 + stat.Ctim.Nsec}, nil
+	return codexTextSnapshot{exists: true, text: string(b), dev: stat.Dev, ino: stat.Ino, nlink: stat.Nlink, size: st.Size(), mtime: stat.Mtime, ctime: stat.Ctime}, nil
 }
 func writeExclusive(path string, data []byte, mode os.FileMode) error {
 	f, e := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
@@ -1130,6 +1129,9 @@ func writeExclusive(path string, data []byte, mode os.FileMode) error {
 			_ = os.Remove(path)
 		}
 	}()
+	if e = platform.ChmodFile(f, mode); e != nil {
+		return e
+	}
 	if _, e = f.Write(data); e != nil {
 		return e
 	}
@@ -1161,12 +1163,7 @@ func atomicCodexText(path string, data []byte) error {
 	return syncDir(path)
 }
 func syncDir(path string) error {
-	f, e := os.Open(filepath.Dir(path))
-	if e != nil {
-		return e
-	}
-	defer f.Close()
-	return f.Sync()
+	return platform.SyncDir(path)
 }
 func replaceSafeText(path string, previous codexTextSnapshot, next string, remove bool) error {
 	return replaceSafeTextWithHook(path, previous, next, remove, nil)
@@ -1273,18 +1270,17 @@ type codexLockObservation struct {
 
 // observeCodexLock opens without following links and binds contents to an inode.
 func observeCodexLock(path string) (codexLockObservation, error) {
-	fd, e := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	f, e := platform.OpenFile(path, os.O_RDONLY, 0)
 	if e != nil {
 		return codexLockObservation{}, e
 	}
-	f := os.NewFile(uintptr(fd), path)
 	defer f.Close()
 	st, e := f.Stat()
 	if e != nil {
 		return codexLockObservation{}, e
 	}
-	sys, ok := st.Sys().(*syscall.Stat_t)
-	if !ok || !st.Mode().IsRegular() || sys.Nlink != 1 {
+	sys, statErr := platform.Stat(f)
+	if statErr != nil || !st.Mode().IsRegular() || sys.Nlink != 1 {
 		return codexLockObservation{}, errors.New("unsafe lock")
 	}
 	raw, e := io.ReadAll(io.LimitReader(f, 4097))
@@ -1295,8 +1291,8 @@ func observeCodexLock(path string) (codexLockObservation, error) {
 	if e != nil {
 		return codexLockObservation{}, e
 	}
-	as := after.Sys().(*syscall.Stat_t)
-	if sys.Dev != as.Dev || sys.Ino != as.Ino || sys.Size != as.Size || sys.Mtim != as.Mtim || sys.Ctim != as.Ctim {
+	as, statErr := platform.Stat(f)
+	if statErr != nil || sys != as || after.Size() != st.Size() {
 		return codexLockObservation{}, errors.New("lock changed while reading")
 	}
 	var data struct {
@@ -1323,8 +1319,7 @@ func reclaimCodexLock(path string, observed codexLockObservation) bool {
 	}
 	alive := false
 	if observed.pid > 0 {
-		e := syscall.Kill(observed.pid, 0)
-		alive = e == nil || e == syscall.EPERM
+		alive = platform.ProcessAlive(observed.pid)
 	}
 	if alive || observed.pid == 0 && time.Since(observed.modTime) < 30*time.Second {
 		return false
@@ -1358,30 +1353,11 @@ func withCodexLockHook(codexHome string, work func(ownerPath string) error, afte
 		return codexProblem("CODEX_CONFIG_UNREADABLE", "Cannot access private Codex lock directory")
 	}
 	guardPath := filepath.Join(stateDir, "lock.guard")
-	guardFD, e := syscall.Open(guardPath, syscall.O_CREAT|syscall.O_RDWR|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0600)
+	guard, e := platform.Lock(guardPath)
 	if e != nil {
 		return codexProblem("CODEX_CONFIG_BUSY", "Cannot safely open Codex lock guard")
 	}
-	guard := os.NewFile(uintptr(guardFD), guardPath)
-	guardStat, e := guard.Stat()
-	if e != nil {
-		_ = guard.Close()
-		return codexProblem("CODEX_CONFIG_BUSY", "Cannot inspect Codex lock guard")
-	}
-	guardSys, ok := guardStat.Sys().(*syscall.Stat_t)
-	if !ok || !guardStat.Mode().IsRegular() || guardSys.Nlink != 1 {
-		_ = guard.Close()
-		return codexProblem("CODEX_CONFIG_BUSY", "Codex lock guard is not a private regular file")
-	}
-	if e = guard.Chmod(0600); e != nil {
-		_ = guard.Close()
-		return codexProblem("CODEX_CONFIG_BUSY", "Cannot secure Codex lock guard")
-	}
-	if e = syscall.Flock(guardFD, syscall.LOCK_EX|syscall.LOCK_NB); e != nil {
-		_ = guard.Close()
-		return codexProblem("CODEX_CONFIG_BUSY", "Another Codex setup or restore operation is active")
-	}
-	defer func() { _ = syscall.Flock(guardFD, syscall.LOCK_UN); _ = guard.Close() }()
+	defer guard.Close()
 	lockPath := filepath.Join(stateDir, "lock.json")
 	nonce := randomHexString(16)
 	for tries := 0; tries < 2; tries++ {
@@ -1419,8 +1395,7 @@ func withCodexLockHook(codexHome string, work func(ownerPath string) error, afte
 
 func codexLockIsStale(observed codexLockObservation) bool {
 	if observed.pid > 0 {
-		e := syscall.Kill(observed.pid, 0)
-		return e != nil && e != syscall.EPERM
+		return !platform.ProcessAlive(observed.pid)
 	}
 	return time.Since(observed.modTime) >= 30*time.Second
 }

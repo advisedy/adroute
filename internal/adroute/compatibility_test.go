@@ -1,6 +1,7 @@
 package adroute
 
 import (
+	"adroute/internal/platform"
 	"bufio"
 	"bytes"
 	"encoding/json"
@@ -340,7 +341,7 @@ func TestRawDiagnosticsRequireReviewablePrivateFileAndClear(t *testing.T) {
 		t.Fatal("private value persisted")
 	}
 	st, e := os.Stat(h.Path)
-	if e != nil || st.Mode().Perm() != 0600 {
+	if e != nil || !platform.PrivateFile(h.Path, st) {
 		t.Fatalf("capture mode unsafe: %v %v", st, e)
 	}
 	if e = d.Clear(); e != nil {

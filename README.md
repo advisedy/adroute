@@ -4,7 +4,7 @@ AdRoute 是本机运行的 Responses 代理与网页模型管理控制台：每�
 
 ## 支持范围与要求
 
-- **仅支持 Linux / WSL**。使用 POSIX 文件锁、信号和本机 TCP4；不承诺原生 Windows 或 macOS 支持。WSL 重启后需重新启动服务。
+- 支持 Linux / WSL 和原生 Windows 10/11；macOS 尚未适配。Windows 使用原生文件锁、访问控制和后台进程，无须 WSL。WSL 重启后需重新启动服务。
 - 正式运行只需一个 Go 可执行文件；网页资源、修复包示例和排查 Prompt 已嵌入其中。运行时不需要 Node.js、npm 或源代码目录，也不需要下载运行组件；连接上游 API、获取模型列表和实际推理仍需要相应网络。
 - 从源码构建需 Go 1.23 或更新版本。Codex 客户端配置接入与恢复兼容官方 Codex CLI **0.156.0**；模型调用本身不依赖 Codex 登录，也不依赖订阅账号。
 - 配置只接受当前 version 5 格式；没有旧格式迁移、`migrate` 命令或旧路由兼容。损坏/不支持的配置会报错并保留原文件。
@@ -12,6 +12,8 @@ AdRoute 是本机运行的 Responses 代理与网页模型管理控制台：每�
 ## 安装
 
 ### 从源码构建
+
+以下 Bash 命令适用于 Linux / WSL；原生 Windows 见下方 PowerShell 安装。
 
 ```bash
 make build
@@ -51,6 +53,24 @@ go install ./cmd/adroute
 
 将适用于 Linux 的单个 `adroute` 二进制放到个人 PATH 目录并添加可执行权限；无须安装 npm 包。
 
+### 原生 Windows（PowerShell）
+
+安装 Go 1.23 或更新版本，下载并解压完整源码，在项目目录打开 PowerShell：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+脚本编译并安装到 `%LOCALAPPDATA%\Programs\AdRoute\adroute.exe`，加入当前用户 PATH，无须管理员权限。重新打开终端后运行 `adroute start`。也可立即用完整路径启动：
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\AdRoute\adroute.exe" start
+```
+
+已有适合本机架构的 Windows 可执行文件时，可以使用 `-Binary .\adroute.exe` 安装，无须 Go。`-InstallDir` 指定安装目录，`-NoModifyPath` 禁止修改 PATH。更新前先执行 `adroute stop`，Windows 不允许覆盖正在运行的程序。脚本不会自动停止服务。
+
+安装完成后不需要 Go、Node.js 或源码。后台启动、状态、停止、重启命令与 Linux 一致；前台运行支持 Ctrl+C。后台服务不注册为 Windows 系统服务，也不自动开机启动。在线下载和自动发布尚未配置，不能把源码安装脚本直接通过 `irm | iex` 当作下载器。
+
 ## 启动与命令
 
 ```bash
@@ -76,13 +96,13 @@ adroute --version
 
 ## 配置目录
 
-默认数据目录按以下顺序选择：非空 `ADROUTE_HOME`；否则非空 `$XDG_CONFIG_HOME/adroute`；否则 `$HOME/.config/adroute`。最终目录会解析为绝对路径；若指定的 `ADROUTE_HOME` 或 `XDG_CONFIG_HOME` 是相对路径，则相对当前工作目录解析。所有同一实例的 `start`、`status`、`stop`、`codex restore` 必须使用一致的环境变量和工作目录。
+默认数据目录按以下顺序选择：非空 `ADROUTE_HOME`；否则非空 `$XDG_CONFIG_HOME/adroute`；否则用户主目录下的 `.config/adroute`（Windows 为 `%USERPROFILE%\.config\adroute`）。最终目录会解析为绝对路径；若指定的 `ADROUTE_HOME` 或 `XDG_CONFIG_HOME` 是相对路径，则相对当前工作目录解析。所有同一实例的 `start`、`status`、`stop`、`codex restore` 必须使用一致的环境变量和工作目录。
 
 ```bash
 ADROUTE_HOME="$HOME/.config/adroute-dev" adroute start --port 3002
 ```
 
-`CODEX_HOME` 用于选择 Codex 配置目录；`ADROUTE_PORT` 是默认监听端口，`ADROUTE_CODEX_BIN` 可指定 Codex CLI 的可执行文件。数据目录默认 0700，含凭据的文件默认 0600。`config.json` 保存模型组、模型条目与上游 API Key 明文，因此应保护整个账号和数据目录；这不是加密存储。
+`CODEX_HOME` 用于选择 Codex 配置目录；`ADROUTE_PORT` 是默认监听端口，`ADROUTE_CODEX_BIN` 可指定 Codex CLI 的可执行文件。Linux 数据目录默认 0700，含凭据的文件默认 0600；Windows 使用仅当前用户和 SYSTEM 可访问的 ACL。`config.json` 保存模型组、模型条目与上游 API Key 明文，因此应保护整个账号和数据目录；这不是加密存储。Windows 使用支持 ACL 的本地文件系统；网络共享和 FAT/exFAT 不在验证范围内。
 
 AdRoute 只接受当前 version 5 配置，不会读取旧 `auth.json`、旧 `providers.json` 或迁移旧格式。若启动提示配置不支持，请先停止服务，将报错提到的配置文件**自行备份到安全位置**，再重新配置；备份也包含凭据。不要覆盖损坏文件。
 
@@ -112,7 +132,7 @@ AdRoute 只接受当前 version 5 配置，不会读取旧 `auth.json`、旧 `pr
 
 更换上游 Key、地址或真实 ID 后会清除旧测速结果。若模型配置已保存但 Codex 目录发布失败，页面会单独提示，可在处理文件／权限问题后点击“重试发布目录”，不必重复保存模型。
 
-代理支持 `POST /v1/responses` 与 `GET /v1/models`，不提供 Chat Completions 或 Anthropic 转换、语音/图像生成，也不做自动重试、凭据共享或失败换模型。上游是否支持 Responses 取决于该地址和模型本身。
+代理支持 `POST /v1/responses` 与 `GET /v1/models`，不提供 Chat Completions 或 Anthropic 转换、语音/图像生成。普通模型路由直接转发；聚合路由可按配置顺序和轮次在可重试错误后切换成员。上游是否支持 Responses 取决于该地址和模型本身。
 
 ## Codex 接入与恢复
 
@@ -158,7 +178,7 @@ npm test
 - **服务显示状态不确定**：身份无法确认时 `stop` 会拒绝发送停止信号。先检查 `ADROUTE_HOME/run/service.json`、日志和端口，不要删除不确定实例的状态文件。
 - **Codex 配置接入失败**：检查 `CODEX_HOME`、TOML 内容和权限。配置冲突/损坏时 AdRoute 会拒绝覆盖；必要时用 `adroute codex restore` 后人工检查。
 - **请求返回无默认模型/路由不存在**：网页需保存模型；省略 `model` 时要求存在开放的默认模型。已删除、已关闭或改名后的对外 ID 不会回退，重新打开 `/model` 选择有效条目。
-- **上游连接失败**：确认该条目的 Base URL、上游 API Key、Responses 支持与网络；代理不会跟随携带凭据的重定向、自动重试或换用其他模型。
+- **上游连接失败**：确认该条目的 Base URL、上游 API Key、Responses 支持与网络；代理不会跟随携带凭据的重定向。普通模型路由不自动换模型，聚合路由按配置重试。
 
 ## 架构与功能说明
 

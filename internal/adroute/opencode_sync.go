@@ -1,6 +1,7 @@
 package adroute
 
 import (
+	"adroute/internal/platform"
 	"bytes"
 	"crypto/rand"
 	"encoding/hex"
@@ -13,7 +14,6 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
-	"syscall"
 	"time"
 	"unicode/utf8"
 )
@@ -400,7 +400,7 @@ func validSyncPath(p string) bool {
 	if !filepath.IsAbs(p) || strings.ContainsRune(p, 0) {
 		return false
 	}
-	for _, part := range strings.Split(p, string(os.PathSeparator)) {
+	for _, part := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }) {
 		if part == "." || part == ".." {
 			return false
 		}
@@ -416,7 +416,7 @@ func locateOpenCode(o OpenCodeSyncOptions) (string, error) {
 	}
 	env := o.Env
 	if env == nil {
-		env = map[string]string{"HOME": os.Getenv("HOME"), "XDG_CONFIG_HOME": os.Getenv("XDG_CONFIG_HOME"), "OPENCODE_CONFIG": os.Getenv("OPENCODE_CONFIG"), "OPENCODE_CONFIG_DIR": os.Getenv("OPENCODE_CONFIG_DIR"), "OPENCODE_CONFIG_CONTENT": os.Getenv("OPENCODE_CONFIG_CONTENT")}
+		env = map[string]string{"HOME": os.Getenv("HOME"), "USERPROFILE": os.Getenv("USERPROFILE"), "XDG_CONFIG_HOME": os.Getenv("XDG_CONFIG_HOME"), "OPENCODE_CONFIG": os.Getenv("OPENCODE_CONFIG"), "OPENCODE_CONFIG_DIR": os.Getenv("OPENCODE_CONFIG_DIR"), "OPENCODE_CONFIG_CONTENT": os.Getenv("OPENCODE_CONFIG_CONTENT")}
 	}
 	for _, k := range []string{"OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "OPENCODE_CONFIG_CONTENT"} {
 		if env[k] != "" {
@@ -424,8 +424,12 @@ func locateOpenCode(o OpenCodeSyncOptions) (string, error) {
 		}
 	}
 	dir := env["XDG_CONFIG_HOME"]
-	if dir == "" && filepath.IsAbs(env["HOME"]) {
-		dir = filepath.Join(env["HOME"], ".config")
+	userHome := env["HOME"]
+	if userHome == "" {
+		userHome = env["USERPROFILE"]
+	}
+	if dir == "" && filepath.IsAbs(userHome) {
+		dir = filepath.Join(userHome, ".config")
 	}
 	if !validSyncPath(dir) {
 		return "", appError("Cannot determine OpenCode config path", 409, "OPENCODE_CONFIG_PATH")
@@ -472,8 +476,8 @@ func parentSnapshot(path string) ([]syncParent, error) {
 		if !st.IsDir() || st.Mode()&os.ModeSymlink != 0 {
 			return nil, appError("OpenCode config parents must be real directories", 409, "OPENCODE_CONFIG_UNSAFE")
 		}
-		sys, ok := st.Sys().(*syscall.Stat_t)
-		if !ok {
+		sys, statErr := platform.Lstat(cur)
+		if statErr != nil {
 			return nil, appError("Cannot inspect OpenCode directory", 409, "OPENCODE_CONFIG_UNSAFE")
 		}
 		out = append(out, syncParent{cur, uint64(sys.Dev), sys.Ino})
@@ -486,8 +490,8 @@ func checkParents(p []syncParent) error {
 		if e != nil || !st.IsDir() || st.Mode()&os.ModeSymlink != 0 {
 			return appError("OpenCode config directory changed during sync", 409, "OPENCODE_CONFIG_CHANGED")
 		}
-		sys := st.Sys().(*syscall.Stat_t)
-		if uint64(sys.Dev) != x.dev || sys.Ino != x.ino {
+		sys, statErr := platform.Lstat(x.path)
+		if statErr != nil || sys.Dev != x.dev || sys.Ino != x.ino {
 			return appError("OpenCode config directory changed during sync", 409, "OPENCODE_CONFIG_CHANGED")
 		}
 	}
@@ -503,21 +507,20 @@ type syncFile struct {
 }
 
 func readSyncFile(path string) (syncFile, error) {
-	fd, e := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	f, e := platform.OpenFile(path, os.O_RDONLY, 0)
 	if e != nil {
 		if os.IsNotExist(e) {
 			return syncFile{}, appError("OpenCode config is missing", 409, "OPENCODE_CONFIG_MISSING")
 		}
 		return syncFile{}, appError("OpenCode config cannot be safely opened", 409, "OPENCODE_CONFIG_UNSAFE")
 	}
-	f := os.NewFile(uintptr(fd), path)
 	defer f.Close()
 	st, e := f.Stat()
 	if e != nil {
 		return syncFile{}, appError("OpenCode config cannot be inspected", 409, "OPENCODE_CONFIG_UNSAFE")
 	}
-	sys, ok := st.Sys().(*syscall.Stat_t)
-	if !ok || !st.Mode().IsRegular() || sys.Nlink != 1 {
+	sys, statErr := platform.Stat(f)
+	if statErr != nil || !st.Mode().IsRegular() || sys.Nlink != 1 {
 		return syncFile{}, appError("OpenCode config must be a single-link regular file", 409, "OPENCODE_CONFIG_UNSAFE")
 	}
 	if st.Size() > openCodeLimit {
@@ -534,14 +537,14 @@ func readSyncFile(path string) (syncFile, error) {
 	if e != nil {
 		return syncFile{}, appError("OpenCode config changed during read", 409, "OPENCODE_CONFIG_CHANGED")
 	}
-	as := after.Sys().(*syscall.Stat_t)
-	if sys.Ino != as.Ino || sys.Size != as.Size || sys.Mtim != as.Mtim || sys.Ctim != as.Ctim {
+	as, statErr := platform.Stat(f)
+	if statErr != nil || sys != as || after.Size() != st.Size() {
 		return syncFile{}, appError("OpenCode config changed during read", 409, "OPENCODE_CONFIG_CHANGED")
 	}
 	if !utf8Valid(b) {
 		return syncFile{}, appError("OpenCode config contains invalid UTF-8", 409, "OPENCODE_CONFIG_INVALID")
 	}
-	return syncFile{b, uint64(sys.Dev), sys.Ino, sys.Nlink, sys.Size, sys.Mtim.Sec*1e9 + sys.Mtim.Nsec, sys.Ctim.Sec*1e9 + sys.Ctim.Nsec, st.Mode()}, nil
+	return syncFile{b, sys.Dev, sys.Ino, sys.Nlink, sys.Size, sys.Mtime, sys.Ctime, st.Mode()}, nil
 }
 func sameSyncFile(a, b syncFile) bool {
 	return a.dev == b.dev && a.ino == b.ino && a.nlink == b.nlink && a.size == b.size && a.mtime == b.mtime && a.ctime == b.ctime && a.mode == b.mode && bytes.Equal(a.bytes, b.bytes)
@@ -554,7 +557,7 @@ func randomSyncID() string {
 	return hex.EncodeToString(b)
 }
 func createSyncFile(path string, b []byte) error {
-	f, e := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0600)
+	f, e := platform.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if e != nil {
 		return e
 	}
@@ -565,6 +568,9 @@ func createSyncFile(path string, b []byte) error {
 			_ = os.Remove(path)
 		}
 	}()
+	if e = platform.ChmodFile(f, 0600); e != nil {
+		return e
+	}
 	if _, e = f.Write(b); e != nil {
 		return e
 	}
@@ -578,20 +584,15 @@ func createSyncFile(path string, b []byte) error {
 	return nil
 }
 func syncParentDir(path string) error {
-	f, e := os.Open(filepath.Dir(path))
-	if e != nil {
-		return e
-	}
-	defer f.Close()
-	return f.Sync()
+	return platform.SyncDir(path)
 }
 func syncIdentity(path string) (uint64, uint64, error) {
 	st, e := os.Lstat(path)
 	if e != nil {
 		return 0, 0, e
 	}
-	sys, ok := st.Sys().(*syscall.Stat_t)
-	if !ok || !st.Mode().IsRegular() || st.Mode()&os.ModeSymlink != 0 {
+	sys, statErr := platform.Lstat(path)
+	if statErr != nil || !st.Mode().IsRegular() || st.Mode()&os.ModeSymlink != 0 {
 		return 0, 0, fmt.Errorf("not a regular file")
 	}
 	return uint64(sys.Dev), sys.Ino, nil
@@ -684,8 +685,8 @@ func syncOpenCodeWithHook(o OpenCodeSyncOptions, beforeFinalCheck func()) (OpenC
 	if e != nil {
 		return OpenCodeSyncResult{}, appError("OpenCode sync lock changed", 409, "OPENCODE_CONFIG_CHANGED")
 	}
-	liSys, ok := li.Sys().(*syscall.Stat_t)
-	if !ok || !li.Mode().IsRegular() || li.Mode()&os.ModeSymlink != 0 || uint64(liSys.Dev) != lockDev || liSys.Ino != lockIno {
+	liSys, statErr := platform.Lstat(lock)
+	if statErr != nil || !li.Mode().IsRegular() || li.Mode()&os.ModeSymlink != 0 || liSys.Dev != lockDev || liSys.Ino != lockIno {
 		return OpenCodeSyncResult{}, appError("OpenCode sync lock changed", 409, "OPENCODE_CONFIG_CHANGED")
 	}
 	if e = checkParents(parents); e != nil {

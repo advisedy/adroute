@@ -3,6 +3,7 @@ package adroute
 // This file contains the deliberately data-only adapter runtime. Adapter input
 // is never evaluated and replay never performs network or model inference.
 import (
+	"adroute/internal/platform"
 	"bufio"
 	"bytes"
 	"crypto/sha256"
@@ -17,7 +18,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 	"unicode"
 )
@@ -1021,8 +1021,8 @@ func (d *AdapterDirectory) Refresh() (AdapterDirectoryState, error) {
 			files = append(files, AdapterFileState{File: name, Status: "invalid", Message: "文件不可安全读取，请检查类型、权限或写入状态。"})
 			continue
 		}
-		meta, ok := stat.Sys().(*syscall.Stat_t)
-		if !stat.Mode().IsRegular() || stat.Mode()&os.ModeSymlink != 0 || !ok || meta.Nlink != 1 {
+		meta, statErr := platform.Lstat(path)
+		if !stat.Mode().IsRegular() || stat.Mode()&os.ModeSymlink != 0 || statErr != nil || meta.Nlink != 1 {
 			files = append(files, AdapterFileState{File: name, Status: "invalid", Message: "拒绝读取链接、目录或其他非普通文件。"})
 			continue
 		}
@@ -1173,17 +1173,16 @@ func validAdapterFilename(name string) bool {
 	return len(name) > len(".adroute-adapter.json") && len(name) <= 255 && !strings.HasPrefix(name, ".") && filepath.Base(name) == name && !strings.ContainsAny(name, "/\\\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f\x7f") && strings.HasSuffix(name, ".adroute-adapter.json")
 }
 func openAdapterRoot(path string) (*os.File, string, error) {
-	fd, e := syscall.Open(path, syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
+	f, e := platform.OpenFile(path, os.O_RDONLY, 0)
 	if e != nil {
 		return nil, "", appError("adapter directory unsafe", 409, "ADAPTER_DIRECTORY_UNSAFE")
 	}
-	f := os.NewFile(uintptr(fd), path)
 	st, e := f.Stat()
 	if e != nil || !st.IsDir() {
 		_ = f.Close()
 		return nil, "", appError("adapter directory unsafe", 409, "ADAPTER_DIRECTORY_UNSAFE")
 	}
-	if e = f.Chmod(0700); e != nil {
+	if e = platform.ChmodFile(f, 0700); e != nil {
 		_ = f.Close()
 		return nil, "", e
 	}
@@ -1195,18 +1194,17 @@ func openAdapterRoot(path string) (*os.File, string, error) {
 }
 
 func readAdapterCandidate(path string, before os.FileInfo) ([]byte, error) {
-	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	f, err := platform.OpenFile(path, os.O_RDONLY, 0)
 	if err != nil {
 		return nil, err
 	}
-	f := os.NewFile(uintptr(fd), path)
 	defer f.Close()
 	opened, err := f.Stat()
 	if err != nil {
 		return nil, err
 	}
-	a, ok := opened.Sys().(*syscall.Stat_t)
-	if !ok || !opened.Mode().IsRegular() || a.Nlink != 1 || !os.SameFile(before, opened) {
+	a, statErr := platform.Stat(f)
+	if statErr != nil || !opened.Mode().IsRegular() || a.Nlink != 1 || !os.SameFile(before, opened) {
 		return nil, fmt.Errorf("unsafe or changed adapter candidate")
 	}
 	b, err := io.ReadAll(io.LimitReader(f, AdapterPackageLimit+1))

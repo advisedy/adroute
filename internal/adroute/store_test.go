@@ -1,12 +1,14 @@
 package adroute
 
 import (
+	"adroute/internal/platform"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -548,7 +550,7 @@ func TestConfigSymlinkIsRejectedWithoutChangingTarget(t *testing.T) {
 		t.Fatal("symlink target was altered")
 	}
 	info, _ := os.Stat(target)
-	if info.Mode().Perm() != 0644 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0644 {
 		t.Fatalf("outside file mode changed: %o", info.Mode().Perm())
 	}
 }
@@ -604,7 +606,7 @@ func TestEmptyArraysAndPrivateDirectoryModes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if info.Mode().Perm() != 0700 {
+		if !platform.PrivateFile(dir, info) {
 			t.Fatalf("%s mode %o", dir, info.Mode().Perm())
 		}
 	}

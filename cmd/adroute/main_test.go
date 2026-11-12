@@ -1,6 +1,7 @@
 package main
 
 import (
+	"adroute/internal/platform"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -10,10 +11,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -21,6 +22,9 @@ import (
 func buildCLI(t *testing.T) string {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "adroute")
+	if runtime.GOOS == "windows" {
+		out += ".exe"
+	}
 	cmd := exec.Command("go", "build", "-o", out, "./cmd/adroute")
 	cmd.Dir = filepath.Clean(filepath.Join("..", ".."))
 	if b, e := cmd.CombinedOutput(); e != nil {
@@ -57,6 +61,9 @@ func runCLIInDir(t *testing.T, bin string, env []string, dir string, args ...str
 }
 
 func TestBuiltCLICodexRestoreUsesOriginalAdrouteHomePrecedence(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX HOME fallback; Windows uses USERPROFILE")
+	}
 	bin := buildCLI(t)
 	root := t.TempDir()
 	cases := []struct {
@@ -280,6 +287,9 @@ func TestBuiltCLIStaleLivePIDIsNeverSignaled(t *testing.T) {
 	if e := os.WriteFile(filepath.Join(home, "run", "service.json"), b, 0600); e != nil {
 		t.Fatal(e)
 	}
+	if err := platform.Chmod(filepath.Join(home, "run", "service.json"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	code, _, errout := runCLI(t, bin, env, "stop")
 	if code != 1 || !strings.Contains(errout, "拒绝") {
 		t.Fatalf("stale state stop %d %s", code, errout)
@@ -288,8 +298,8 @@ func TestBuiltCLIStaleLivePIDIsNeverSignaled(t *testing.T) {
 	if code != 1 || !strings.Contains(out, "\"uncertain\":true") {
 		t.Fatalf("stale state status %d %s", code, out)
 	}
-	if e := syscall.Kill(os.Getpid(), 0); e != nil {
-		t.Fatal("test process was signaled", e)
+	if !platform.ProcessAlive(os.Getpid()) {
+		t.Fatal("test process was signaled")
 	}
 }
 
@@ -320,6 +330,9 @@ func TestBuiltCLIStatusAndStopIgnoreCorruptProviderConfigButRequireDaemonIdentit
 }
 
 func TestBuiltCLIForegroundSignalAndRecordedCodexRestore(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Go cannot send Ctrl+C to another Windows process; native lifecycle is tested through authenticated stop")
+	}
 	bin := buildCLI(t)
 	_, env := cliEnv(t, bin)
 	codex := ""
@@ -371,7 +384,7 @@ func TestBuiltCLIForegroundSignalAndRecordedCodexRestore(t *testing.T) {
 	if e = os.WriteFile(config, append(configured, []byte("# later user edit\n")...), 0600); e != nil {
 		t.Fatal(e)
 	}
-	if e = cmd.Process.Signal(syscall.SIGINT); e != nil {
+	if e = cmd.Process.Signal(os.Interrupt); e != nil {
 		t.Fatal(e)
 	}
 	wait := make(chan error, 1)

@@ -1,3 +1,5 @@
+//go:build linux
+
 package scripts
 
 import (
@@ -113,7 +115,11 @@ func TestInstallerBuildsSourceFromOutsideRepository(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("installer targets Linux/WSL")
 	}
-	out, err := runInstaller(t, home, []string{"PATH=" + path, "SHELL=/bin/unknown"}, "--prefix", prefix)
+	cache, err := exec.Command(goPath, "env", "GOMODCACHE").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := runInstaller(t, home, []string{"PATH=" + path, "SHELL=/bin/unknown", "GOMODCACHE=" + strings.TrimSpace(string(cache)), "GOPROXY=off"}, "--prefix", prefix)
 	if err != nil {
 		t.Fatalf("source install failed: %v\n%s", err, out)
 	}
