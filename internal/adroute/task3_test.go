@@ -577,7 +577,7 @@ func TestCodexTargetLockSerializesConcurrentCalls(t *testing.T) {
 		t.Fatal(e)
 	}
 	lockPath := filepath.Join(lockDir, "lock.json")
-	if e := os.WriteFile(lockPath, []byte(`{"pid":1,"nonce":"other"}`), 0600); e != nil {
+	if e := os.WriteFile(lockPath, []byte(`{"pid":`+strconv.Itoa(os.Getpid())+`,"nonce":"other"}`), 0600); e != nil {
 		t.Fatal(e)
 	}
 	if _, e := f.connect(); !hasCode(e, "CODEX_CONFIG_BUSY") {

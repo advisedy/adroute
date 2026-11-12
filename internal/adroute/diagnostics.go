@@ -536,6 +536,8 @@ func GenerateRepairPromptFromTemplate(templateDocument []byte, projectRoot strin
 }
 
 func generateRepairPromptWithDocument(doc, projectRoot string, store *Store, directory *AdapterDirectory, diagnostics *Diagnostics, modelID string, includeDiagnosis bool, diagnosisID string) (RepairPromptResult, error) {
+	// Git checkouts on Windows can contain CRLF, including the fenced template.
+	doc = strings.ReplaceAll(doc, "\r\n", "\n")
 	if directory == nil || store == nil {
 		return RepairPromptResult{}, appError("repair prompt unavailable", 500, "PROMPT_UNAVAILABLE")
 	}
