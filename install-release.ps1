@@ -29,7 +29,13 @@ try {
         if (-not $checksums.ContainsKey($name)) { throw "Missing checksum: $name" }
         $download = Join-Path $work $name
         Invoke-WebRequest -UseBasicParsing -Uri "$ReleaseBaseURL/$name" -OutFile $download
-        if ((Get-FileHash -LiteralPath $download -Algorithm SHA256).Hash -ine $checksums[$name]) {
+        # Use .NET directly; module discovery can differ when Windows
+        # PowerShell is launched from PowerShell 7 or another host.
+        $algorithm = [Security.Cryptography.SHA256]::Create()
+        $stream = [IO.File]::OpenRead($download)
+        try { $actualHash = [BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '') }
+        finally { $stream.Dispose(); $algorithm.Dispose() }
+        if ($actualHash -ine $checksums[$name]) {
             throw "Checksum mismatch: $name"
         }
     }
