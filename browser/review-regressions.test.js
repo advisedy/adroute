@@ -67,6 +67,74 @@ test('a pending save remains single-flight after state refresh and programmatic 
   assert.equal(writes, 1);
 });
 
+test('aggregate edits can be saved again after reopening and followed by a new aggregate', { timeout: 60000 }, async t => {
+  const f = await goBrowserFixture(t), { page } = f;
+  const model = await goSavedModel(f);
+  const created = await f.api('/api/aggregates', 'POST', { name: 'fallback', members: [model.id], maxRounds: 5 });
+  assert.equal(created.status, 201);
+  const aggregate = (await created.json()).aggregates[0];
+  const edit = () => page.locator(`[data-aggregate-id="${aggregate.id}"]`).getByRole('button', { name: '编辑', exact: true }).click();
+  await f.login();
+  await page.locator('nav [data-tab="aggregates"]').click();
+  for (const rounds of ['3', '7']) {
+    await edit();
+    await page.locator('#aggregate-rounds').fill(rounds);
+    await expect(page.locator('#aggregate-save')).toBeEnabled();
+    await page.locator('#aggregate-save').click();
+    await expect(page.locator('#aggregate-dialog')).toBeHidden();
+    assert.equal((await f.state()).aggregates[0].maxRounds, Number(rounds));
+  }
+  await page.locator('#add-aggregate').click();
+  await page.locator('#aggregate-name').fill('another-fallback');
+  await page.locator('#aggregate-members select').nth(1).selectOption(model.id);
+  await expect(page.locator('#aggregate-save')).toBeEnabled();
+  await page.locator('#aggregate-save').click();
+  await expect(page.locator('#aggregate-dialog')).toBeHidden();
+  assert.equal((await f.state()).aggregates.length, 2);
+});
+
+test('aggregate saves stay single-flight across refresh and reopen, and failures allow retry', { timeout: 60000 }, async t => {
+  const f = await goBrowserFixture(t), { page } = f;
+  const model = await goSavedModel(f);
+  for (const name of ['fallback', 'taken']) {
+    assert.equal((await f.api('/api/aggregates', 'POST', { name, members: [model.id], maxRounds: 5 })).status, 201);
+  }
+  const aggregate = (await f.state()).aggregates.find(item => item.name === 'fallback');
+  const edit = () => page.locator(`[data-aggregate-id="${aggregate.id}"]`).getByRole('button', { name: '编辑', exact: true }).click();
+  const gate = deferred(), seen = deferred(); let writes = 0;
+  t.after(() => gate.resolve());
+  await page.route(`**/api/aggregates/${aggregate.id}`, async route => {
+    if (route.request().method() !== 'PUT') return route.continue();
+    writes++; seen.resolve(); await gate.promise; await route.continue().catch(() => {});
+  });
+  await f.login();
+  await page.locator('nav [data-tab="aggregates"]').click();
+  await edit();
+  await page.locator('#aggregate-name').fill('taken');
+  await page.locator('#aggregate-save').click(); await seen.promise;
+  await refresh(page);
+  await expect(page.locator('#aggregate-save')).toBeDisabled();
+  await page.locator('#aggregate-dialog [data-close-dialog]').first().click();
+  await edit();
+  await expect(page.locator('#aggregate-save')).toBeDisabled();
+  await page.locator('#aggregate-name').fill('taken');
+  await page.locator('#aggregate-form').evaluate(form => form.requestSubmit());
+  // Let the original dialog's request finish, then retry from the newer draft.
+  gate.resolve();
+  await expect(page.locator('#aggregate-save')).toBeEnabled();
+  assert.equal(writes, 1);
+  await expect(page.locator('#aggregate-dialog')).toBeVisible();
+  await expect(page.locator('#aggregate-name')).toHaveValue('taken');
+  await page.locator('#aggregate-save').click();
+  await expect(page.locator('#aggregate-error')).toBeVisible();
+  await expect(page.locator('#aggregate-save')).toBeEnabled();
+  await page.locator('#aggregate-name').fill('fallback-updated');
+  await page.locator('#aggregate-save').click();
+  await expect(page.locator('#aggregate-dialog')).toBeHidden();
+  assert.equal((await f.state()).aggregates.find(item => item.id === aggregate.id).name, 'fallback-updated');
+  assert.equal(writes, 3);
+});
+
 test('a late inline group response updates global groups but never a newer model draft', { timeout: 60000 }, async t => {
   const f = await goBrowserFixture(t), { page } = f;
   const model = await goSavedModel(f);

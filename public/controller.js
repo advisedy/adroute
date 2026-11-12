@@ -56,6 +56,7 @@
   // This identity stays private in memory; it is never rendered or persisted.
   function modelSignature(model) { return JSON.stringify([model.groupId, model.groupName, model.name, model.model, model.baseUrl, model.apiKey, model.profile]); }
   function modelWriteKey() { return editingModel ? `model:${editingModel.id}` : `new-model:${formVersion}`; }
+  function aggregateWriteKey() { return `aggregate:${editingAggregate ? editingAggregate.id : 'new:' + aggregateVersion}`; }
   function groupName(id) { return state?.groups.find(group => group.id === id)?.name || ''; }
   function closeDialog(id) {
     if ($(id).open) $(id).close();
@@ -138,6 +139,7 @@
     for (const id of ['import-config', 'export-config']) $(id).disabled = !ready || state?.capabilities?.configTransfer !== true || pendingWrites.has(id);
     $('import-confirm').disabled = !ready || pendingWrites.has('import-confirm');
     $('model-save').disabled = !ready || pendingWrites.has(modelWriteKey());
+    $('aggregate-save').disabled = !ready || pendingWrites.has(aggregateWriteKey());
     $('model-create-group').disabled = !ready || pendingWrites.has(`inline-group:${formVersion}`);
     $('delete-submit').disabled = !ready || pendingWrites.has(`delete:${deleting}`);
     $('group-create-submit').disabled = !ready || pendingWrites.has('group-create-submit');
@@ -1089,7 +1091,7 @@
     if (!backendReady()) { notice('aggregate-error', BACKEND_UPDATE); return; }
     const context = editingAggregate;
     const version = aggregateVersion;
-    const key = `aggregate:${context ? context.id : 'new:' + version}`;
+    const key = aggregateWriteKey();
     const current = () => version === aggregateVersion && $('aggregate-dialog').open;
     if (pendingWrites.has(key)) return;
     notice('aggregate-error');
