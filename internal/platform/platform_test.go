@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // These tests protect the file/lock contract shared by config editing and CLI
@@ -128,6 +129,10 @@ func TestMetadataDetectsRewriteWithRestoredModificationTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Windows can timestamp two immediate writes in the same clock tick.
+	// Separate them so this test checks ChangeTime rather than clock resolution.
+	// Transaction callers also compare content bytes for edits within a tick.
+	time.Sleep(20 * time.Millisecond)
 	if err = os.WriteFile(path, []byte("edited"), 0600); err != nil {
 		t.Fatal(err)
 	}
