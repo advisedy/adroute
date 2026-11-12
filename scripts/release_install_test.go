@@ -15,6 +15,15 @@ import (
 )
 
 func TestReleaseInstallerDownloadsVerifiesAndPreservesExistingOnMismatch(t *testing.T) {
+	testReleaseInstaller(t, false)
+}
+
+func TestOnlineInstallerPipelineDownloadsVerifiesAndPreservesExistingOnMismatch(t *testing.T) {
+	testReleaseInstaller(t, true)
+}
+
+func testReleaseInstaller(t *testing.T, online bool) {
+	t.Helper()
 	root, err := filepath.Abs("..")
 	if err != nil {
 		t.Fatal(err)
@@ -37,10 +46,46 @@ func TestReleaseInstallerDownloadsVerifiesAndPreservesExistingOnMismatch(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
+	bootstrapBody, err := os.ReadFile(filepath.Join(root, bootstrap))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := "install-online.sh"
+	if runtime.GOOS == "windows" {
+		entry = "install-online.ps1"
+	}
+	var entryBody []byte
+	if online {
+		entryBody, err = os.ReadFile(filepath.Join(root, entry))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	asset := "adroute_0.1.0_" + runtime.GOOS + "_" + runtime.GOARCH + suffix
 	var corrupt atomic.Bool
+	var corruptBootstrap atomic.Bool
+	var unavailable atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/releases/latest" {
+			if unavailable.Load() {
+				http.NotFound(w, r)
+				return
+			}
+			http.Redirect(w, r, "/releases/tag/v0.1.0", http.StatusFound)
+			return
+		}
+		if r.URL.Path == "/releases/tag/v0.1.0" {
+			return
+		}
 		switch filepath.Base(r.URL.Path) {
+		case entry:
+			w.Write(entryBody)
+		case bootstrap:
+			if corruptBootstrap.Load() {
+				w.Write([]byte("invalid bootstrap"))
+			} else {
+				w.Write(bootstrapBody)
+			}
 		case asset:
 			if corrupt.Load() {
 				w.Write([]byte("corrupted download"))
@@ -50,7 +95,7 @@ func TestReleaseInstallerDownloadsVerifiesAndPreservesExistingOnMismatch(t *test
 		case helper:
 			w.Write(installer)
 		case "SHA256SUMS":
-			fmt.Fprintf(w, "%x  %s\n%x  %s\n", sha256.Sum256(payload), asset, sha256.Sum256(installer), helper)
+			fmt.Fprintf(w, "%x  %s\n%x  %s\n%x  %s\n", sha256.Sum256(payload), asset, sha256.Sum256(installer), helper, sha256.Sum256(bootstrapBody), bootstrap)
 		default:
 			http.NotFound(w, r)
 		}
@@ -61,12 +106,20 @@ func TestReleaseInstallerDownloadsVerifiesAndPreservesExistingOnMismatch(t *test
 	run := func() ([]byte, error) {
 		var cmd *exec.Cmd
 		if runtime.GOOS == "windows" {
-			cmd = exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", filepath.Join(root, bootstrap), "-ReleaseBaseURL", server.URL, "-InstallDir", prefix, "-NoModifyPath")
+			if online {
+				cmd = exec.Command("pwsh", "-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference = 'Stop'; $previousUserPath = [Environment]::GetEnvironmentVariable('Path', 'User'); try { irm ($env:ADROUTE_INSTALL_REPOSITORY_URL + '/"+entry+"') | iex; if ((Get-Command adroute).Source -ne (Join-Path $env:ADROUTE_INSTALL_DIR 'adroute.exe')) { throw 'Installed command is missing from current PATH' } } finally { [Environment]::SetEnvironmentVariable('Path', $previousUserPath, 'User') }")
+			} else {
+				cmd = exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", filepath.Join(root, bootstrap), "-ReleaseBaseURL", server.URL, "-InstallDir", prefix, "-NoModifyPath")
+			}
 		} else {
-			cmd = exec.Command("bash", filepath.Join(root, bootstrap), "--prefix", prefix, "--no-modify-path")
+			if online {
+				cmd = exec.Command("bash", "-o", "pipefail", "-c", `curl -fsSL "$ADROUTE_INSTALL_REPOSITORY_URL/install-online.sh" | bash`)
+			} else {
+				cmd = exec.Command("bash", filepath.Join(root, bootstrap), "--prefix", prefix, "--no-modify-path")
+			}
 		}
 		cmd.Dir = t.TempDir()
-		cmd.Env = append(os.Environ(), "HOME="+home, "ADROUTE_RELEASE_BASE_URL="+server.URL)
+		cmd.Env = append(os.Environ(), "HOME="+home, "SHELL=/bin/bash", "ADROUTE_RELEASE_BASE_URL="+server.URL, "ADROUTE_INSTALL_REPOSITORY_URL="+server.URL, "ADROUTE_INSTALL_DIR="+prefix)
 		return cmd.CombinedOutput()
 	}
 	for i := 0; i < 2; i++ {
@@ -81,11 +134,45 @@ func TestReleaseInstallerDownloadsVerifiesAndPreservesExistingOnMismatch(t *test
 	if output, err := exec.Command(installed, "--version").CombinedOutput(); err != nil || strings.TrimSpace(string(output)) != "0.1.0" {
 		t.Fatalf("version: %v %s", err, output)
 	}
+	if online {
+		if runtime.GOOS != "windows" {
+			profile, err := os.ReadFile(filepath.Join(home, ".bashrc"))
+			if err != nil || !strings.Contains(string(profile), prefix+"/bin") {
+				t.Fatalf("PATH configuration: %v %s", err, profile)
+			}
+		}
+		corruptBootstrap.Store(true)
+		if output, err := run(); err == nil {
+			t.Fatalf("bootstrap checksum mismatch accepted: %s", output)
+		}
+		corruptBootstrap.Store(false)
+		unavailable.Store(true)
+		if output, err := run(); err == nil {
+			t.Fatalf("missing latest release accepted: %s", output)
+		}
+		unavailable.Store(false)
+	}
 	corrupt.Store(true)
 	if output, err := run(); err == nil {
 		t.Fatalf("checksum mismatch accepted: %s", output)
 	}
 	if output, err := exec.Command(installed, "--version").CombinedOutput(); err != nil || strings.TrimSpace(string(output)) != "0.1.0" {
 		t.Fatalf("failed update damaged installation: %v %s", err, output)
+	}
+}
+
+func TestOnlineInstallerRejectsWindowsPowerShell5(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell is only available on Windows")
+	}
+	root, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference = 'Stop'; Get-Content -Raw -LiteralPath $env:ADROUTE_TEST_ENTRY | Invoke-Expression")
+	cmd.Env = append(os.Environ(), "ADROUTE_TEST_ENTRY="+filepath.Join(root, "install-online.ps1"))
+	output, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "requires PowerShell 7+") {
+		t.Fatalf("version rejection: %v %s", err, output)
 	}
 }

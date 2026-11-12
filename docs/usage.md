@@ -11,6 +11,24 @@ AdRoute 是本机运行的 Responses 代理与网页模型管理控制台：每�
 
 ## 安装
 
+### 一键安装最新正式版本
+
+Linux / WSL（自动配置 Bash / Zsh 的 PATH）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/advisedy/adroute/main/install-online.sh | bash
+```
+
+Windows（要求 PowerShell 7+，用 `pwsh` 打开）：
+
+```powershell
+irm https://raw.githubusercontent.com/advisedy/adroute/main/install-online.ps1 | iex
+```
+
+没有 PowerShell 7 时，请从 [PowerShell 官方下载页](https://aka.ms/powershell-release?tag=stable)安装；Windows 自带的 Windows PowerShell 5.1 不适用这个入口。入口会先确定最新正式版，再校验并执行该版本的安装脚本；下载或校验失败会停止。安装后重新打开终端运行 `adroute start`。更新前先执行 `adroute stop`，然后重跑同一条安装命令。
+
+需要自定义目录时，可在执行入口前设置 `ADROUTE_INSTALL_DIR`：Linux 中它是安装前缀（程序位于其 `bin` 下），Windows 中它是程序所在目录。需要指定版本或禁止修改 PATH 时，下载下面的版本安装器后按参数执行。
+
 ### 一键安装 v0.1.0（无需 Go）
 
 从 [GitHub Releases](https://github.com/advisedy/adroute/releases/tag/v0.1.0) 安装预编译版本，支持 Linux / WSL、Windows 的 amd64 和 arm64。安装器自动选择架构，下载二进制并核对 SHA-256，无须管理员权限、Go 或 Node.js。

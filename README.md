@@ -9,22 +9,22 @@
 
 ## 一键安装
 
-当前发布版：[v0.1.0](https://github.com/advisedy/adroute/releases/tag/v0.1.0)。安装器自动选择架构、校验文件并安装到个人目录，无须管理员权限。
+安装最新[正式发布版](https://github.com/advisedy/adroute/releases/latest)。安装器自动选择架构、校验文件并安装到个人目录，无须管理员权限。
 
 ### Linux / WSL
 
 复制到 Bash 或 Zsh 终端运行（需要 curl、Bash 和 sha256sum）：
 
 ```bash
-curl -fsSL https://github.com/advisedy/adroute/releases/download/v0.1.0/install-release.sh -o /tmp/adroute-install.sh && bash /tmp/adroute-install.sh --configure-path
+curl -fsSL https://raw.githubusercontent.com/advisedy/adroute/main/install-online.sh | bash
 ```
 
 ### Windows
 
-复制到 PowerShell 运行：
+复制到 **PowerShell 7 或更新版本**运行（可用 `pwsh` 打开；[下载 PowerShell](https://aka.ms/powershell-release?tag=stable)）：
 
 ```powershell
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $installer = Join-Path $env:TEMP 'adroute-install.ps1'; Invoke-WebRequest -UseBasicParsing https://github.com/advisedy/adroute/releases/download/v0.1.0/install-release.ps1 -OutFile $installer; if (-not $?) { throw 'Download failed' }; powershell -NoProfile -ExecutionPolicy Bypass -File $installer
+irm https://raw.githubusercontent.com/advisedy/adroute/main/install-online.ps1 | iex
 ```
 
 安装完成后，**重新打开终端**，启动服务：
@@ -33,7 +33,7 @@ curl -fsSL https://github.com/advisedy/adroute/releases/download/v0.1.0/install-
 adroute start
 ```
 
-也可以在 [Release 页面](https://github.com/advisedy/adroute/releases/tag/v0.1.0)手动下载。提供 amd64 / arm64；arm64 尚未实机验证，macOS 暂不支持。
+也可以在 [Release 页面](https://github.com/advisedy/adroute/releases/latest)手动下载。提供 amd64 / arm64；arm64 尚未实机验证，macOS 暂不支持。
 
 ## 开始使用
 
@@ -57,7 +57,7 @@ adroute codex restore         # 单独恢复 Codex 设置
 adroute --version             # 查看版本
 ```
 
-更新发布版时，先运行 `adroute stop`，再执行对应版本的安装命令，最后运行 `adroute start`。
+更新发布版时，先运行 `adroute stop`，再执行上面同一条安装命令，最后运行 `adroute start`。安装入口会自动获取最新正式版本。
 
 ## 从源码安装
 
