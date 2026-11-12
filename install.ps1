@@ -50,7 +50,7 @@ try {
             throw 'Refusing to replace a linked executable.'
         }
         try { [IO.File]::Replace($staged, $destination, $null) }
-        catch { throw 'Cannot replace adroute.exe. Stop AdRoute with adroute stop before updating, then retry.' }
+        catch { throw "Cannot replace adroute.exe. Stop AdRoute with adroute stop before updating, then retry. $($_.Exception.Message)" }
     } else { [IO.File]::Move($staged, $destination) }
     $staged = $null
 
