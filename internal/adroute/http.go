@@ -35,6 +35,7 @@ type HTTPApp struct {
 	opts        HTTPOptions
 	diagnostics *Diagnostics
 	directory   *AdapterDirectory
+	cooldowns   *cooldownTable
 	requestMu   sync.Mutex
 	requests    []map[string]any
 }
@@ -50,7 +51,11 @@ func NewHTTPApp(o HTTPOptions) (*HTTPApp, error) {
 	clientCopy.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	o.Client = &clientCopy
 	if o.HeaderTimeout == 0 {
-		o.HeaderTimeout = 30 * time.Second
+		// Reasoning tiers such as xhigh routinely take longer than half a
+		// minute before the first response header, so a short deadline would
+		// report "unavailable" for an upstream that is merely slow and force a
+		// whole cold-cache replay on another member.
+		o.HeaderTimeout = 90 * time.Second
 	}
 	if o.IdleTimeout == 0 {
 		o.IdleTimeout = 5 * time.Minute
@@ -58,7 +63,7 @@ func NewHTTPApp(o HTTPOptions) (*HTTPApp, error) {
 	if o.Store != nil && o.PromptRoot == "" {
 		o.PromptRoot = "."
 	}
-	a := &HTTPApp{opts: o, requests: []map[string]any{}}
+	a := &HTTPApp{opts: o, cooldowns: newCooldownTable(failoverCooldown, nil), requests: []map[string]any{}}
 	if o.Store != nil {
 		a.diagnostics = NewDiagnostics(o.Store.Paths().Home, DiagnosticLimits{})
 		a.directory = NewAdapterDirectory(o.Store)

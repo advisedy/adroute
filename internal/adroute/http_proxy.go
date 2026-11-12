@@ -15,8 +15,10 @@ import (
 
 // failoverBudget bounds the whole header stage of an aggregate request. It is a
 // product constant, not a user setting: members keep their per-try timeouts,
-// and this cap only stops a bad chain from stacking them.
-const failoverBudget = 6 * time.Minute
+// and this cap only stops a bad chain from stacking them. It is sized so the
+// largest allowed chain still gets one full pass: MaxAggregateSize members times
+// the default header timeout, with headroom for the retry pause.
+const failoverBudget = 13 * time.Minute
 
 // aggregateMaxAttempts caps the candidate list so one request stays bounded
 // even if a chain's limits are later loosened. Current worst case is 8 members
@@ -79,6 +81,11 @@ func (a *HTTPApp) forwardResponse(w http.ResponseWriter, r *http.Request, chain 
 	if len(chain) > aggregateMaxAttempts {
 		chain = chain[:aggregateMaxAttempts]
 	}
+	// Members that failed within the cooldown window move to the back of the
+	// chain for this request only. The configured order still decides everything
+	// when every member is healthy, so the steady state keeps hitting the first
+	// member and its prompt cache.
+	chain = orderByCooldown(a.cooldowns, chain)
 	if len(chain) == 1 {
 		// A lone candidate skips the failover envelope entirely: errors reach
 		// the client exactly as the upstream produced them.
@@ -150,6 +157,11 @@ func (a *HTTPApp) tryCandidate(w http.ResponseWriter, r *http.Request, route Rou
 	status := 502
 	detail, code := "", ""
 	fail := func(err error) (bool, error) {
+		// Health memory is an aggregate concept: a lone model route keeps
+		// behaving exactly as before, with no extra state recorded.
+		if sink != nil && memberUnhealthy(err) {
+			a.cooldowns.failed(route.ID)
+		}
 		if sink != nil {
 			*sink = err
 		}
@@ -214,6 +226,11 @@ func (a *HTTPApp) tryCandidate(w http.ResponseWriter, r *http.Request, route Rou
 	resp := result.Response
 	defer resp.Body.Close()
 	status = resp.StatusCode
+	// Only a 2xx header proves the member healthy. A retryable status still
+	// reaches fail() below and keeps the cooldown it just earned.
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		a.cooldowns.served(route.ID)
+	}
 	if diagnosis != nil {
 		diagnosis.Headers(status)
 	}

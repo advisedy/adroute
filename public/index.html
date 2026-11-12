@@ -110,7 +110,7 @@
               <button id="add-aggregate" class="button primary" type="button"><span aria-hidden="true">＋</span> 新建聚合</button>
             </div>
           </div>
-          <div class="section-heading"><div><h2 id="aggregates-heading">聚合 <span id="aggregate-count" class="count-badge">0</span></h2><p class="muted">聚合是一串按顺序尝试的模型；某个成员连不上、超时或返回 429/5xx 时会自动换下一个，全部轮完才报错。客户端对聚合和模型用法完全相同，通过 <code>adroute/agg/&lt;名称&gt;</code> 调用。</p></div></div>
+          <div class="section-heading"><div><h2 id="aggregates-heading">聚合 <span id="aggregate-count" class="count-badge">0</span></h2><p class="muted">聚合是一串按顺序尝试的模型；某个成员连不上、超时或返回 429/5xx 时会自动换下一个，全部轮完才报错。刚失败的成员会在 60 秒内排到后面，健康时仍优先第一个成员。客户端对聚合和模型用法完全相同，通过 <code>adroute/agg/&lt;名称&gt;</code> 调用。</p></div></div>
           <div id="aggregate-list" class="aggregate-list"></div>
         </section>
 
@@ -216,7 +216,7 @@
     <form id="aggregate-form">
       <div class="dialog-heading"><div><p class="eyebrow">FAILOVER CHAIN</p><h2 id="aggregate-dialog-title">新建聚合</h2></div><button class="icon-button" type="button" data-close-dialog="aggregate-dialog" aria-label="关闭聚合表单">×</button></div>
       <div class="dialog-body">
-        <p class="muted dialog-intro">聚合按成员顺序依次尝试；某个成员连不上、超时或返回 429/5xx 时自动换下一个。最多 8 个成员、最多 10 轮重试。</p>
+        <p class="muted dialog-intro">聚合按成员顺序依次尝试；某个成员连不上、超时或返回 429/5xx 时自动换下一个。刚失败的成员会在 60 秒内排到后面，全部成员健康时仍优先第一个。最多 8 个成员、最多 10 轮重试。</p>
         <label for="aggregate-name">聚合名称 <span class="required-text">必填</span></label>
         <input id="aggregate-name" type="text" required maxlength="100" autocomplete="off" spellcheck="false" placeholder="例如 coding-failover">
         <p class="field-help">对外模型 ID 为 <code id="aggregate-route-preview">adroute/agg/&lt;名称&gt;</code>。只能使用英文字母、数字、点、下划线和连字符。</p>
