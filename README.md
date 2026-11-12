@@ -35,6 +35,8 @@ adroute start
 
 也可以在 [Release 页面](https://github.com/advisedy/adroute/releases/latest)手动下载。提供 amd64 / arm64；arm64 尚未实机验证，macOS 暂不支持。
 
+下载会自动续传重试；如果所在网络无法直连 GitHub 的下载 CDN，设置代理后重跑同一条命令：Linux 用 `HTTPS_PROXY`，Windows 用 `$env:ADROUTE_INSTALL_PROXY`。详见[安装与排障](docs/usage.md)。
+
 ## 开始使用
 
 1. 打开启动命令输出的管理链接。

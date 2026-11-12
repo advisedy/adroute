@@ -161,6 +161,114 @@ func testReleaseInstaller(t *testing.T, online bool) {
 	}
 }
 
+// A truncated release download must resume rather than fail the install: the
+// binary is several megabytes and comes from a different host than github.com.
+func TestReleaseInstallerResumesTruncatedDownload(t *testing.T) {
+	root, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	suffix, helper, bootstrap := "", "install.sh", "install-release.sh"
+	if runtime.GOOS == "windows" {
+		suffix, helper, bootstrap = ".exe", "install.ps1", "install-release.ps1"
+	}
+	binary := filepath.Join(t.TempDir(), "adroute"+suffix)
+	build := exec.Command("go", "build", "-o", binary, "./cmd/adroute")
+	build.Dir = root
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v %s", err, output)
+	}
+	payload, err := os.ReadFile(binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installer, err := os.ReadFile(filepath.Join(root, helper))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrapBody, err := os.ReadFile(filepath.Join(root, bootstrap))
+	if err != nil {
+		t.Fatal(err)
+	}
+	asset := "adroute_0.1.0_" + runtime.GOOS + "_" + runtime.GOARCH + suffix
+	var truncated atomic.Int32
+	var resumed atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/releases/latest" {
+			http.Redirect(w, r, "/releases/tag/v0.1.0", http.StatusFound)
+			return
+		}
+		if r.URL.Path == "/releases/tag/v0.1.0" {
+			return
+		}
+		name := filepath.Base(r.URL.Path)
+		if name != asset {
+			switch name {
+			case bootstrap:
+				w.Write(bootstrapBody)
+			case helper:
+				w.Write(installer)
+			case "SHA256SUMS":
+				fmt.Fprintf(w, "%x  %s\n%x  %s\n%x  %s\n", sha256.Sum256(payload), asset, sha256.Sum256(installer), helper, sha256.Sum256(bootstrapBody), bootstrap)
+			default:
+				http.NotFound(w, r)
+			}
+			return
+		}
+		// Cut the first two transfers in half, then serve the rest. A resumed
+		// request proves the installer asked for the remaining bytes instead of
+		// restarting, and the checksum still has to match for the install to pass.
+		logRange := r.Header.Get("Range")
+		start := 0
+		if rest, ok := strings.CutPrefix(logRange, "bytes="); ok {
+			fmt.Sscanf(strings.TrimSuffix(rest, "-"), "%d", &start)
+		}
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(payload)-start))
+		if start > 0 {
+			resumed.Store(true)
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, len(payload)-1, len(payload)))
+			w.WriteHeader(http.StatusPartialContent)
+		}
+		body := payload[start:]
+		if truncated.Add(1) <= 2 {
+			w.Write(body[:len(body)/2])
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			// Closing the connection mid-body reproduces the EOF users see.
+			if hijacker, ok := w.(http.Hijacker); ok {
+				if conn, _, err := hijacker.Hijack(); err == nil {
+					conn.Close()
+				}
+			}
+			return
+		}
+		w.Write(body)
+	}))
+	defer server.Close()
+
+	prefix := filepath.Join(t.TempDir(), "with spaces")
+	cmd := exec.Command("bash", filepath.Join(root, bootstrap), "--prefix", prefix, "--no-modify-path")
+	if runtime.GOOS == "windows" {
+		cmd = exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", filepath.Join(root, bootstrap), "-ReleaseBaseURL", server.URL, "-InstallDir", prefix, "-NoModifyPath")
+	}
+	cmd.Dir = t.TempDir()
+	cmd.Env = append(os.Environ(), "HOME="+t.TempDir(), "SHELL=/bin/bash", "ADROUTE_RELEASE_BASE_URL="+server.URL)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("install after truncation: %v %s", err, output)
+	}
+	if !resumed.Load() {
+		t.Fatal("installer restarted the download instead of resuming it")
+	}
+	installed := filepath.Join(prefix, "bin", "adroute")
+	if runtime.GOOS == "windows" {
+		installed = filepath.Join(prefix, "adroute.exe")
+	}
+	if output, err := exec.Command(installed, "--version").CombinedOutput(); err != nil || strings.TrimSpace(string(output)) != "0.1.0" {
+		t.Fatalf("version after resumed download: %v %s", err, output)
+	}
+}
+
 func TestOnlineInstallerRejectsWindowsPowerShell5(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell is only available on Windows")

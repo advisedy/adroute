@@ -29,6 +29,22 @@ irm https://raw.githubusercontent.com/advisedy/adroute/main/install-online.ps1 |
 
 需要自定义目录时，可在执行入口前设置 `ADROUTE_INSTALL_DIR`：Linux 中它是安装前缀（程序位于其 `bin` 下），Windows 中它是程序所在目录。需要指定版本或禁止修改 PATH 时，下载下面的版本安装器后按参数执行。
 
+下载失败（例如 `unexpected EOF`、连接被重置、哈希不匹配）时，安装器会保留已下载的部分并续传重试，Linux 最多 5 次、Windows 最多 3 次；仍然失败才报错。如果所在网络无法直连 GitHub 的 Release 下载，可在执行入口前设置代理，两个平台都支持：
+
+```bash
+# Linux / WSL：curl 直接读取这两个变量
+export HTTPS_PROXY=http://127.0.0.1:7890
+curl -fsSL https://raw.githubusercontent.com/advisedy/adroute/main/install-online.sh | bash
+```
+
+```powershell
+# Windows：PowerShell 7 的 Invoke-WebRequest 不读取 HTTP(S)_PROXY，需显式指定
+$env:ADROUTE_INSTALL_PROXY = 'http://127.0.0.1:7890'
+irm https://raw.githubusercontent.com/advisedy/adroute/main/install-online.ps1 | iex
+```
+
+`ADROUTE_INSTALL_PROXY` 会被传给下载的版本安装器（也接受 `-Proxy` 参数）。只想先拿到可执行文件时，按下一节手动下载并安装。
+
 ### 一键安装 v0.1.0（无需 Go）
 
 从 [GitHub Releases](https://github.com/advisedy/adroute/releases/tag/v0.1.0) 安装预编译版本，支持 Linux / WSL、Windows 的 amd64 和 arm64。安装器自动选择架构，下载二进制并核对 SHA-256，无须管理员权限、Go 或 Node.js。
@@ -217,6 +233,8 @@ npm test
 - **Codex 配置接入失败**：检查 `CODEX_HOME`、TOML 内容和权限。配置冲突/损坏时 AdRoute 会拒绝覆盖；必要时用 `adroute codex restore` 后人工检查。
 - **请求返回无默认模型/路由不存在**：网页需保存模型；省略 `model` 时要求存在开放的默认模型。已删除、已关闭或改名后的对外 ID 不会回退，重新打开 `/model` 选择有效条目。
 - **上游连接失败**：确认该条目的 Base URL、上游 API Key、Responses 支持与网络；代理不会跟随携带凭据的重定向。普通模型路由不自动换模型，聚合路由按配置重试。
+- **安装时下载中断**：`unexpected EOF`、`0 bytes from the transport stream`、`transfer closed` 表示连接在传完前被关闭，通常发生在 GitHub Release 大文件实际所在的下载 CDN 域名（`github.com` 本身可能是通的）。安装器会续传重试，仍失败时按上一节的代理说明设置 `HTTPS_PROXY`（Linux）或 `ADROUTE_INSTALL_PROXY`（Windows）后重跑。注意 Windows PowerShell 的 `Invoke-WebRequest` 不读取 `HTTP_PROXY`/`HTTPS_PROXY`，只认系统代理或显式参数。
+- **安装时报哈希不匹配**：说明传输过程被改写或截断，重新执行即可（会重新下载）；反复出现时先排除企业网关的 TLS 检查、杀软扫描和镜像缓存。安装器校验失败会保留原有安装，不会覆盖成坏文件。
 
 ## 架构与功能说明
 
