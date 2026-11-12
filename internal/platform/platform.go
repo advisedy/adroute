@@ -12,15 +12,6 @@ type Metadata struct {
 	Size, Mtime, Ctime int64
 }
 
-func Lstat(path string) (Metadata, error) {
-	f, err := OpenFile(path, os.O_RDONLY, 0)
-	if err != nil {
-		return Metadata{}, err
-	}
-	defer f.Close()
-	return Stat(f)
-}
-
 type Guard struct{ file *os.File }
 
 func Lock(path string) (*Guard, error) {

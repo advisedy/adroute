@@ -61,6 +61,14 @@ func Stat(f *os.File) (Metadata, error) {
 	}
 	return Metadata{uint64(s.VolumeSerialNumber), uint64(s.FileIndexHigh)<<32 | uint64(s.FileIndexLow), uint64(s.NumberOfLinks), int64(s.FileSizeHigh)<<32 | int64(s.FileSizeLow), basic.LastWriteTime, basic.ChangeTime}, nil
 }
+func Lstat(path string) (Metadata, error) {
+	f, err := openFileAccess(path, windows.FILE_READ_ATTRIBUTES, windows.OPEN_EXISTING)
+	if err != nil {
+		return Metadata{}, err
+	}
+	defer f.Close()
+	return Stat(f)
+}
 func lockFile(f *os.File) error {
 	return windows.LockFileEx(windows.Handle(f.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &windows.Overlapped{})
 }

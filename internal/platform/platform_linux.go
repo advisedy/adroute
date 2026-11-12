@@ -21,7 +21,20 @@ func Stat(f *os.File) (Metadata, error) {
 		return Metadata{}, err
 	}
 	s := st.Sys().(*syscall.Stat_t)
-	return Metadata{uint64(s.Dev), s.Ino, uint64(s.Nlink), s.Size, s.Mtim.Sec*1e9 + s.Mtim.Nsec, s.Ctim.Sec*1e9 + s.Ctim.Nsec}, nil
+	return metadata(s), nil
+}
+func Lstat(path string) (Metadata, error) {
+	var s syscall.Stat_t
+	if err := syscall.Lstat(path, &s); err != nil {
+		return Metadata{}, err
+	}
+	if s.Mode&syscall.S_IFMT == syscall.S_IFLNK {
+		return Metadata{}, os.ErrPermission
+	}
+	return metadata(&s), nil
+}
+func metadata(s *syscall.Stat_t) Metadata {
+	return Metadata{uint64(s.Dev), s.Ino, uint64(s.Nlink), s.Size, s.Mtim.Sec*1e9 + s.Mtim.Nsec, s.Ctim.Sec*1e9 + s.Ctim.Nsec}
 }
 func lockFile(f *os.File) error   { return syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) }
 func unlockFile(f *os.File) error { return syscall.Flock(int(f.Fd()), syscall.LOCK_UN) }

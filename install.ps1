@@ -49,7 +49,9 @@ try {
         if ((Get-Item -LiteralPath $destination -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
             throw 'Refusing to replace a linked executable.'
         }
-        try { [IO.File]::Replace($staged, $destination, $null) }
+        # Windows PowerShell converts $null to an empty string for this .NET
+        # string argument; NullString supplies the actual null backup path.
+        try { [IO.File]::Replace($staged, $destination, [NullString]::Value) }
         catch { throw "Cannot replace adroute.exe. Stop AdRoute with adroute stop before updating, then retry. $($_.Exception.Message)" }
     } else { [IO.File]::Move($staged, $destination) }
     $staged = $null
