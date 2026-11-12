@@ -114,3 +114,31 @@ func TestPrivateDirectoryAndFile(t *testing.T) {
 		}
 	}
 }
+
+func TestMetadataDetectsRewriteWithRestoredModificationTime(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(path, []byte("before"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, []byte("edited"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	after, err := Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before == after {
+		t.Fatal("same-size rewrite with restored modification time went undetected")
+	}
+}
