@@ -24,7 +24,7 @@ curl -fsSL https://github.com/advisedy/adroute/releases/download/v0.1.0/install-
 Windows PowerShell：
 
 ```powershell
-$installer = Join-Path $env:TEMP 'adroute-install.ps1'; Invoke-WebRequest -UseBasicParsing https://github.com/advisedy/adroute/releases/download/v0.1.0/install-release.ps1 -OutFile $installer; if (-not $?) { throw 'Download failed' }; powershell -NoProfile -ExecutionPolicy Bypass -File $installer
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $installer = Join-Path $env:TEMP 'adroute-install.ps1'; Invoke-WebRequest -UseBasicParsing https://github.com/advisedy/adroute/releases/download/v0.1.0/install-release.ps1 -OutFile $installer; if (-not $?) { throw 'Download failed' }; powershell -NoProfile -ExecutionPolicy Bypass -File $installer
 ```
 
 安装后重新打开终端，运行 `adroute start`。Linux 默认安装到 `~/.local/bin` 并配置 Bash/Zsh PATH；Windows 默认安装到 `%LOCALAPPDATA%\Programs\AdRoute` 并加入用户 PATH。更新前先运行 `adroute stop`，再重跑安装命令；脚本不会自动停止或启动服务。使用 `--no-modify-path`（Linux）或 `-NoModifyPath`（Windows）可禁止修改 PATH；使用 `--prefix` 或 `-InstallDir` 可指定目录。
