@@ -9,10 +9,6 @@ import (
 )
 
 func OpenFile(path string, flag int, mode os.FileMode) (*os.File, error) {
-	name, err := windows.UTF16PtrFromString(path)
-	if err != nil {
-		return nil, err
-	}
 	access := uint32(windows.GENERIC_READ)
 	if flag&os.O_RDWR != 0 {
 		access |= windows.GENERIC_WRITE
@@ -25,6 +21,14 @@ func OpenFile(path string, flag int, mode os.FileMode) (*os.File, error) {
 	}
 	if flag&os.O_EXCL != 0 && flag&os.O_CREATE != 0 {
 		disposition = windows.CREATE_NEW
+	}
+	return openFileAccess(path, access, disposition)
+}
+
+func openFileAccess(path string, access, disposition uint32) (*os.File, error) {
+	name, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
 	}
 	h, err := windows.CreateFile(name, access, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, disposition, windows.FILE_FLAG_OPEN_REPARSE_POINT|windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
 	if err != nil {
@@ -45,7 +49,17 @@ func Stat(f *os.File) (Metadata, error) {
 	if err := windows.GetFileInformationByHandle(windows.Handle(f.Fd()), &s); err != nil {
 		return Metadata{}, err
 	}
-	return Metadata{uint64(s.VolumeSerialNumber), uint64(s.FileIndexHigh)<<32 | uint64(s.FileIndexLow), uint64(s.NumberOfLinks), int64(s.FileSizeHigh)<<32 | int64(s.FileSizeLow), s.LastWriteTime.Nanoseconds(), s.CreationTime.Nanoseconds()}, nil
+	// CreationTime is stable across edits; ChangeTime records metadata/content
+	// changes even if an editor restores LastWriteTime after a same-size write.
+	var basic struct {
+		CreationTime, LastAccessTime, LastWriteTime, ChangeTime int64
+		FileAttributes                                          uint32
+		Padding                                                 uint32
+	}
+	if err := windows.GetFileInformationByHandleEx(windows.Handle(f.Fd()), windows.FileBasicInfo, (*byte)(unsafe.Pointer(&basic)), uint32(unsafe.Sizeof(basic))); err != nil {
+		return Metadata{}, err
+	}
+	return Metadata{uint64(s.VolumeSerialNumber), uint64(s.FileIndexHigh)<<32 | uint64(s.FileIndexLow), uint64(s.NumberOfLinks), int64(s.FileSizeHigh)<<32 | int64(s.FileSizeLow), basic.LastWriteTime, basic.ChangeTime}, nil
 }
 func lockFile(f *os.File) error {
 	return windows.LockFileEx(windows.Handle(f.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &windows.Overlapped{})
@@ -108,11 +122,43 @@ func PrivateFile(path string, info os.FileInfo) bool {
 	}
 	return true
 }
-func ChmodFile(f *os.File, mode os.FileMode) error { return Chmod(f.Name(), mode) }
+func ChmodFile(f *os.File, mode os.FileMode) error {
+	if mode.Perm()&0077 != 0 {
+		return f.Chmod(mode)
+	}
+	// os.Open handles may lack WRITE_DAC. Open an ACL-capable no-follow handle,
+	// verify its identity against the caller's file, and modify that handle.
+	secured, err := openFileAccess(f.Name(), windows.WRITE_DAC|windows.READ_CONTROL|windows.FILE_READ_ATTRIBUTES, windows.OPEN_EXISTING)
+	if err != nil {
+		return err
+	}
+	defer secured.Close()
+	want, err := Stat(f)
+	if err != nil {
+		return err
+	}
+	got, err := Stat(secured)
+	if err != nil {
+		return err
+	}
+	if want.Dev != got.Dev || want.Ino != got.Ino {
+		return os.ErrPermission
+	}
+	return setPrivateACL(secured)
+}
 func Chmod(path string, mode os.FileMode) error {
 	if mode.Perm()&0077 != 0 {
 		return os.Chmod(path, mode)
 	}
+	f, err := openFileAccess(path, windows.WRITE_DAC|windows.READ_CONTROL|windows.FILE_READ_ATTRIBUTES, windows.OPEN_EXISTING)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return setPrivateACL(f)
+}
+
+func setPrivateACL(f *os.File) error {
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {
 		return err
@@ -125,5 +171,5 @@ func Chmod(path string, mode os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	return windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, dacl, nil)
+	return windows.SetSecurityInfo(windows.Handle(f.Fd()), windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, dacl, nil)
 }

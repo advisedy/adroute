@@ -96,7 +96,9 @@ func TestQuickTestJSONResponse(t *testing.T) {
 	if w.Code != 200 || result.Outcome != "ok" || result.OutputTokens == nil || *result.OutputTokens != 12 {
 		t.Fatalf("json quick test %d %#v %s", w.Code, result, w.Body.String())
 	}
-	if result.TokensPerSecond == nil || *result.TokensPerSecond <= 0 {
+	// A buffered localhost reply can complete within one Windows clock tick.
+	// Valid usage still means success, but zero elapsed time has no finite rate.
+	if result.TokensPerSecond == nil && result.DurationMs > 0 || result.TokensPerSecond != nil && *result.TokensPerSecond <= 0 {
 		t.Fatalf("json rate %#v", result.TokensPerSecond)
 	}
 }

@@ -407,7 +407,7 @@ func (u *Upstreams) QuickTest(ctx context.Context, p Route) (QuickTestResult, er
 	case status == "incomplete" && result.TextReturned:
 		result.Outcome = "truncated"
 		result.Message = "已返回文本，但达到本次测试的输出上限或上游提前结束。"
-	case result.TextReturned && (result.TokensPerSecond != nil || result.TextTokensPerSecond != nil):
+	case result.TextReturned && (tokens != nil || result.TextTokensPerSecond != nil):
 		result.Outcome = "ok"
 		result.Message = "可用。"
 	case result.TextReturned:
