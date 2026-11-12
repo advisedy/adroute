@@ -5,7 +5,10 @@
   command -v curl >/dev/null || { echo 'curl is required.' >&2; exit 1; }
   command -v sha256sum >/dev/null || { echo 'sha256sum is required.' >&2; exit 1; }
   repository=${ADROUTE_INSTALL_REPOSITORY_URL:-https://github.com/advisedy/adroute}
-  release=$(curl -fsSL --retry 2 --output /dev/null --write-out '%{url_effective}' "$repository/releases/latest")
+  # Fail fast on an unreachable host, then retry transient errors within a
+  # bounded window so a flaky connection cannot hang the installer.
+  download() { curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 1 --retry-max-time 120 --retry-all-errors "$@"; }
+  release=$(download --output /dev/null --write-out '%{url_effective}' "$repository/releases/latest")
   version=${release##*/}
   [[ $release == "$repository/releases/tag/$version" && $version =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
     echo 'Cannot determine the latest stable AdRoute release.' >&2; exit 1;
@@ -14,7 +17,7 @@
   work=$(mktemp -d)
   trap 'rm -rf -- "$work"' EXIT
   for name in SHA256SUMS install-release.sh; do
-    curl -fsSL --retry 2 "$base/$name" -o "$work/$name"
+    download "$base/$name" -o "$work/$name"
   done
   expected=$(awk '$2 == "install-release.sh" {print $1}' "$work/SHA256SUMS")
   [[ $expected =~ ^[0-9a-fA-F]{64}$ ]] || { echo 'Missing or invalid installer checksum.' >&2; exit 1; }
