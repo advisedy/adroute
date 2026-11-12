@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const ServiceVersion = "0.7.1"
+const ServiceVersion = "0.1.0"
 
 type HTTPOptions struct {
 	Store                      *Store

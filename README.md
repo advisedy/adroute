@@ -7,9 +7,29 @@ AdRoute 是本机运行的 Responses 代理与网页模型管理控制台：每�
 - 支持 Linux / WSL 和原生 Windows 10/11；macOS 尚未适配。Windows 使用原生文件锁、访问控制和后台进程，无须 WSL。WSL 重启后需重新启动服务。
 - 正式运行只需一个 Go 可执行文件；网页资源、修复包示例和排查 Prompt 已嵌入其中。运行时不需要 Node.js、npm 或源代码目录，也不需要下载运行组件；连接上游 API、获取模型列表和实际推理仍需要相应网络。
 - 从源码构建需 Go 1.23 或更新版本。Codex 客户端配置接入与恢复兼容官方 Codex CLI **0.156.0**；模型调用本身不依赖 Codex 登录，也不依赖订阅账号。
-- 配置只接受当前 version 5 格式；没有旧格式迁移、`migrate` 命令或旧路由兼容。损坏/不支持的配置会报错并保留原文件。
+- 配置只接受当前 version 6 格式；没有旧格式迁移、`migrate` 命令或旧路由兼容。损坏/不支持的配置会报错并保留原文件。
 
 ## 安装
+
+### 一键安装 v0.1.0（无需 Go）
+
+从 [GitHub Releases](https://github.com/advisedy/adroute/releases/tag/v0.1.0) 安装预编译版本，支持 Linux / WSL、Windows 的 amd64 和 arm64。安装器自动选择架构，下载二进制并核对 SHA-256，无须管理员权限、Go 或 Node.js。
+
+Linux / WSL（需要 curl、Bash 和 sha256sum）：
+
+```bash
+curl -fsSL https://github.com/advisedy/adroute/releases/download/v0.1.0/install-release.sh -o /tmp/adroute-install.sh && bash /tmp/adroute-install.sh --configure-path
+```
+
+Windows PowerShell：
+
+```powershell
+$installer = Join-Path $env:TEMP 'adroute-install.ps1'; Invoke-WebRequest -UseBasicParsing https://github.com/advisedy/adroute/releases/download/v0.1.0/install-release.ps1 -OutFile $installer; if (-not $?) { throw 'Download failed' }; powershell -NoProfile -ExecutionPolicy Bypass -File $installer
+```
+
+安装后重新打开终端，运行 `adroute start`。Linux 默认安装到 `~/.local/bin` 并配置 Bash/Zsh PATH；Windows 默认安装到 `%LOCALAPPDATA%\Programs\AdRoute` 并加入用户 PATH。更新前先运行 `adroute stop`，再重跑安装命令；脚本不会自动停止或启动服务。使用 `--no-modify-path`（Linux）或 `-NoModifyPath`（Windows）可禁止修改 PATH；使用 `--prefix` 或 `-InstallDir` 可指定目录。
+
+也可以直接在 Release 页面下载对应平台的单个可执行文件。Linux 下载后执行 `chmod +x`；Windows 下载 `.exe` 后直接运行。`SHA256SUMS` 提供下载文件的校验值。amd64 已通过两平台原生测试；arm64 仅经过交叉编译，尚未实机验证。
 
 ### 从源码构建
 
@@ -47,7 +67,7 @@ go install ./cmd/adroute
 ./install.sh --binary /path/to/adroute --prefix "$HOME/.local" --configure-path
 ```
 
-`--binary` 安装指定的可执行文件，不需要 Go 或源码。安装器会读取所选启动文件以定位和更新自己的精确标记块，但绝不会执行或 source 这些文件。每次需要改动已有文件前，都会在同目录创建内容精确、权限为 0600 的唯一备份；不会覆盖既有备份。未获同意时可直接运行 `$HOME/.local/bin/adroute`。低层 `make install PREFIX=...` 仍仅负责构建/复制，不持久设置 PATH；`go install` 则按 Go 的 `GOBIN`（默认 `GOPATH/bin`）安装。项目没有宣称提供已发布的预编译包。
+`--binary` 安装指定的可执行文件，不需要 Go 或源码。安装器会读取所选启动文件以定位和更新自己的精确标记块，但绝不会执行或 source 这些文件。每次需要改动已有文件前，都会在同目录创建内容精确、权限为 0600 的唯一备份；不会覆盖既有备份。未获同意时可直接运行 `$HOME/.local/bin/adroute`。低层 `make install PREFIX=...` 仍仅负责构建/复制，不持久设置 PATH；`go install` 则按 Go 的 `GOBIN`（默认 `GOPATH/bin`）安装。
 
 ### 从发布包安装
 
@@ -69,7 +89,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 
 已有适合本机架构的 Windows 可执行文件时，可以使用 `-Binary .\adroute.exe` 安装，无须 Go。`-InstallDir` 指定安装目录，`-NoModifyPath` 禁止修改 PATH。更新前先执行 `adroute stop`，Windows 不允许覆盖正在运行的程序。脚本不会自动停止服务。
 
-安装完成后不需要 Go、Node.js 或源码。后台启动、状态、停止、重启命令与 Linux 一致；前台运行支持 Ctrl+C。后台服务不注册为 Windows 系统服务，也不自动开机启动。在线下载和自动发布尚未配置，不能把源码安装脚本直接通过 `irm | iex` 当作下载器。
+安装完成后不需要 Go、Node.js 或源码。后台启动、状态、停止、重启命令与 Linux 一致；前台运行支持 Ctrl+C。后台服务不注册为 Windows 系统服务，也不自动开机启动。在线下载安装使用上面的 `install-release.ps1`，源码安装器 `install.ps1` 本身不负责下载。
 
 ## 启动与命令
 
@@ -104,7 +124,7 @@ ADROUTE_HOME="$HOME/.config/adroute-dev" adroute start --port 3002
 
 `CODEX_HOME` 用于选择 Codex 配置目录；`ADROUTE_PORT` 是默认监听端口，`ADROUTE_CODEX_BIN` 可指定 Codex CLI 的可执行文件。Linux 数据目录默认 0700，含凭据的文件默认 0600；Windows 使用仅当前用户和 SYSTEM 可访问的 ACL。`config.json` 保存模型组、模型条目与上游 API Key 明文，因此应保护整个账号和数据目录；这不是加密存储。Windows 使用支持 ACL 的本地文件系统；网络共享和 FAT/exFAT 不在验证范围内。
 
-AdRoute 只接受当前 version 5 配置，不会读取旧 `auth.json`、旧 `providers.json` 或迁移旧格式。若启动提示配置不支持，请先停止服务，将报错提到的配置文件**自行备份到安全位置**，再重新配置；备份也包含凭据。不要覆盖损坏文件。
+AdRoute 只接受当前 version 6 配置，不会读取旧 `auth.json`、旧 `providers.json` 或迁移旧格式。若启动提示配置不支持，请先停止服务，将报错提到的配置文件**自行备份到安全位置**，再重新配置；备份也包含凭据。不要覆盖损坏文件。
 
 ## 网页与路由
 
