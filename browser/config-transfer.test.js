@@ -7,6 +7,7 @@ test('exports and restores model configuration after explicit confirmation', asy
   const f = await goBrowserFixture(t);
   await goSavedModel(f, { group: 'work', name: 'coding', key: 'secret-test-key', isDefault: true });
   await f.login();
+  await f.page.locator('#models-panel > .workbench-heading summary').click();
   await expect(f.page.locator('#export-config')).toBeVisible();
   const [download] = await Promise.all([f.page.waitForEvent('download'), f.page.locator('#export-config').click()]);
   const chunks = [];
@@ -15,7 +16,7 @@ test('exports and restores model configuration after explicit confirmation', asy
   assert.match(content.toString(), /secret-test-key/);
   await goSavedModel(f, { group: 'other', name: 'later' });
   await f.page.locator('#refresh-button').click();
-  await expect(f.page.getByText('other', { exact: true }).first()).toBeVisible();
+  await expect(f.page.getByRole('heading', { name: 'other', exact: true })).toBeVisible();
   await f.page.locator('#import-config-file').setInputFiles({ name: 'bad.json', mimeType: 'application/json', buffer: Buffer.from('bad') });
   await expect(f.page.locator('#global-error')).toContainText('JSON');
   assert.equal((await f.state()).models.length, 2);

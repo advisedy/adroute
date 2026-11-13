@@ -47,6 +47,7 @@ type statusResult struct {
 }
 type codexResult struct {
 	Configured       bool   `json:"configured"`
+	Skipped          bool   `json:"skipped,omitempty"`
 	Restored         bool   `json:"restored,omitempty"`
 	AlreadyRestored  bool   `json:"alreadyRestored,omitempty"`
 	PreservedChanges bool   `json:"preservedChanges,omitempty"`
@@ -199,19 +200,19 @@ func runStart(portArg string, foreground bool, foregroundSignals chan os.Signal)
 	}
 	startCodex(&res)
 	printStarted(res)
-	if !res.Codex.Configured {
+	if !res.Codex.Configured && !res.Codex.Skipped {
 		fmt.Fprintf(os.Stderr, "Codex 自动接入失败：%s\nadroute 服务仍在运行；修复配置问题后重新执行 adroute start。\n", res.Codex.Message)
 	}
 	if foreground && res.Service != nil {
 		if e := waitForeground(res, foregroundSignals); e != nil {
 			return e
 		}
-		if !res.Codex.Configured {
+		if !res.Codex.Configured && !res.Codex.Skipped {
 			return errors.New("Codex 自动接入失败")
 		}
 		return nil
 	}
-	if !res.Codex.Configured {
+	if !res.Codex.Configured && !res.Codex.Skipped {
 		return errors.New("Codex 自动接入失败")
 	}
 	fmt.Println("服务在后台运行，可以关闭当前终端。管理链接和 API Key 含本地访问凭据，请勿分享。")
@@ -616,6 +617,11 @@ type started struct {
 }
 
 func startCodex(s *started) {
+	// An explicit "off" switch in the web UI wins over the default auto-connect.
+	if enabled, ok := a.ClientEnabledPreference(homePath(), a.ClientCodex); ok && !enabled {
+		s.Codex = codexResult{Skipped: true}
+		return
+	}
 	st := s.Status
 	tokens := s.Store.TokenPair()
 	p := s.Store.Paths()
@@ -648,10 +654,14 @@ func printStarted(s started) {
 	fmt.Printf("\n管理页面：http://127.0.0.1:%d/#token=%s\n代理地址：%s/v1\nAPI Key：%s\n进程：%d\n日志：%s\n", s.Status.Port, store.TokenPair().AdminToken, s.Status.URL, store.TokenPair().ProxyToken, s.Status.PID, store.Paths().Log)
 	if s.Codex.Configured {
 		fmt.Printf("Codex 已自动接入：%s\n", s.Codex.ConfigPath)
+	} else if s.Codex.Skipped {
+		fmt.Println("Codex 接入已关闭（可在网页“客户端接入”中重新打开）。")
 	}
 }
 func waitForeground(s started, sig chan os.Signal) error {
-	fmt.Println("Codex 已自动接入：" + s.Codex.ConfigPath)
+	if s.Codex.Configured {
+		fmt.Println("Codex 已自动接入：" + s.Codex.ConfigPath)
+	}
 	fmt.Println("正在前台运行，按 Ctrl+C 停止并恢复 Codex 配置。管理链接和 API Key 含本地访问凭据，请勿分享。")
 	<-sig
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

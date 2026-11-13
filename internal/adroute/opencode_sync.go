@@ -278,7 +278,7 @@ func modelSnapshot(models []SyncModel) (map[string]any, int, error) {
 		if _, ok := out[m.Slug]; ok {
 			return nil, 0, appError("models snapshot is invalid", 409, "OPENCODE_MODELS_INVALID")
 		}
-		out[m.Slug] = map[string]string{"name": m.DisplayName, "modelID": m.Slug}
+		out[m.Slug] = map[string]any{"name": m.DisplayName, "modelID": m.Slug, "variants": openCodeReasoningVariants()}
 	}
 	b, _ := json.Marshal(out)
 	if len(b) > openCodeLimit {
@@ -286,6 +286,20 @@ func modelSnapshot(models []SyncModel) (map[string]any, int, error) {
 	}
 	return out, len(out), nil
 }
+
+// responsesPackages are the runtime packages whose requests reach the gateway
+// as POST /v1/responses. adroute serves only that protocol, so a chat
+// completions package would publish models that cannot answer. The two
+// unqualified entries are OpenCode's defaults and both resolve to responses.
+var responsesPackages = map[string]bool{
+	"@opencode/ai/providers/openai":                      true,
+	"@opencode/ai/providers/openai/responses":            true,
+	"@opencode/ai/providers/openai-compatible/responses": true,
+	"aisdk:@ai-sdk/openai":                               true,
+}
+
+func responsesPackage(pkg string) bool { return responsesPackages[pkg] }
+
 func syncEndpoint(v any) bool {
 	s, ok := v.(string)
 	if !ok || strings.TrimSpace(s) == "" {
@@ -353,7 +367,7 @@ func updateOpenCode(source string, models map[string]any) (string, error) {
 	}
 	pkg, _ := property(provider, "package").(string)
 	base := mapProperty(settings, "baseURL")
-	if config == nil || (pkg != "@opencode/ai/providers/openai/responses" && pkg != "@opencode/ai/providers/openai-compatible/responses") || !syncEndpoint(base) || !credential {
+	if config == nil || !responsesPackage(pkg) || !syncEndpoint(base) || !credential {
 		return "", appError("Configure compatible providers.adroute package, settings.baseURL and credentials first", 409, "OPENCODE_PROVIDER_INCOMPATIBLE")
 	}
 	if oldNode, exists := provider.props["models"]; exists {
@@ -442,7 +456,7 @@ func locateOpenCode(o OpenCodeSyncOptions) (string, error) {
 		return "", appError("Cannot safely inspect OpenCode config candidates", 409, "OPENCODE_CONFIG_UNSAFE")
 	}
 	if ea == nil && eb == nil {
-		return "", appError("Both OpenCode config files exist; specify configPath", 409, "OPENCODE_CONFIG_AMBIGUOUS")
+		return preferredOpenCodeConfig([]string{a, b})
 	}
 	if ea == nil {
 		return a, nil
@@ -451,6 +465,37 @@ func locateOpenCode(o OpenCodeSyncOptions) (string, error) {
 		return b, nil
 	}
 	return "", appError("No existing OpenCode config", 409, "OPENCODE_CONFIG_MISSING")
+}
+
+// preferredOpenCodeConfig resolves the one case the loader deliberately leaves
+// open: both default files exist. OpenCode reads opencode.json first and then
+// opencode.jsonc, so a key defined in both comes from the .jsonc file. Writing
+// to the file that already owns providers.adroute keeps the models where the
+// user's editor and OpenCode both look; only when both files declare it does
+// the .jsonc file win, because that is the copy OpenCode actually applies.
+func preferredOpenCodeConfig(candidates []string) (string, error) {
+	owners := []string{}
+	for _, path := range candidates {
+		raw, err := readSyncFile(path)
+		if err != nil {
+			var appErr *AppError
+			if asAppError(err, &appErr) && (appErr.Code == "OPENCODE_CONFIG_UNSAFE" || appErr.Code == "OPENCODE_CONFIG_MISSING") {
+				return "", err
+			}
+			continue
+		}
+		root, err := parseJSONC(raw.bytes)
+		if err != nil {
+			return "", err
+		}
+		if providers := root.props["providers"]; providers != nil && providers.props != nil && providers.props["adroute"] != nil {
+			owners = append(owners, path)
+		}
+	}
+	if len(owners) == 0 {
+		return "", appError("Both OpenCode config files exist but neither defines providers.adroute", 409, "OPENCODE_CONFIG_AMBIGUOUS")
+	}
+	return owners[len(owners)-1], nil
 }
 
 type syncParent struct {

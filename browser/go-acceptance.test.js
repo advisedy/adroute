@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { expect } from '@playwright/test';
 import { createServer } from 'node:http';
-import { goBrowserFixture, goSavedModel } from './go-fixture.js';
+import { goBrowserFixture, goSavedModel, openRowActions } from './go-fixture.js';
 
 const modelRow = (page, name) => page.locator('.model-row').filter({ hasText: name });
 
@@ -27,6 +27,8 @@ test('built Go binary: auth, add model, discovery, default, setup, compatibility
   await expect(page.locator('#auth-error')).toBeVisible();
   await f.login();
   assert.equal(new URL(page.url()).hash, '');
+  await expect(page.locator('#client-api-key')).toBeHidden();
+  await page.locator('nav [data-tab="setup"]').click();
   await expect(page.locator('#client-base-url')).toHaveValue(/\/v1$/);
   await expect(page.locator('#client-api-key')).toHaveAttribute('type', 'password');
   await page.locator('#toggle-client-api-key').click();
@@ -36,6 +38,7 @@ test('built Go binary: auth, add model, discovery, default, setup, compatibility
   await page.locator('#toggle-client-api-key').click();
   await expect(page.locator('#client-api-key')).toHaveAttribute('type', 'password');
 
+  await page.locator('nav [data-tab="models"]').click();
   // Add a model through the single form, creating its group inline.
   await page.locator('#add-model').click();
   await expect(page.locator('#model-dialog')).toBeVisible();
@@ -133,6 +136,7 @@ test('built Go binary: auth, add model, discovery, default, setup, compatibility
   const row = modelRow(page, 'coding');
   await expect(row.getByRole('button', { name: '编辑', exact: true })).toBeVisible();
   await expect(row.getByRole('button', { name: '测速', exact: true })).toBeVisible();
+  await openRowActions(row);
   await expect(row.getByRole('button', { name: '删除', exact: true })).toBeVisible();
 
   await page.locator('#logout-button').click();
@@ -180,12 +184,14 @@ test('built Go binary: renaming changes the public id and deleting the default c
   await page.locator('#logout-button').click();
   await expect(page.locator('#auth-screen')).toBeVisible();
   await f.login();
+  await openRowActions(modelRow(page, 'renamed'));
   await modelRow(page, 'renamed').getByRole('button', { name: '删除', exact: true }).click();
   await expect(page.locator('#delete-dialog')).toContainText('pixel / renamed');
   await expect(page.locator('#delete-dialog')).toContainText('adroute/pixel/renamed');
   await expect(page.locator('#delete-default-warning')).toBeVisible();
   await page.locator('#delete-dialog [data-close-dialog]').first().click();
   assert.equal((await f.state()).models.length, 1, 'cancelling the delete keeps the model');
+  await openRowActions(modelRow(page, 'renamed'));
   await modelRow(page, 'renamed').getByRole('button', { name: '删除', exact: true }).click();
   await page.locator('#delete-submit').click();
   await expect(page.locator('#delete-dialog')).toBeHidden();
@@ -220,6 +226,7 @@ test('built Go binary: one click starts a quick test, sends one request and cann
   await started;
   await expect(page.locator('dialog[open]')).toHaveCount(0);
   await expect(row.getByRole('button', { name: '编辑', exact: true })).toBeDisabled();
+  await openRowActions(row);
   await expect(row.getByRole('button', { name: '删除', exact: true })).toBeDisabled();
   await expect(row.getByRole('button', { name: '测速中' })).toBeDisabled();
   // Re-render through a refresh keeps the same single in-flight attempt.
@@ -332,24 +339,41 @@ test('built Go binary: diagnostics require consent, capture the stream, replay l
   await expect(page.locator('#diagnosis-preview')).toHaveText('');
 });
 
-test('built Go binary: OpenCode sync is confirmation-gated, single-flight and surfaces failures', { timeout: 60000 }, async t => {
+test('built Go binary: client switches are single-flight and surface failures', { timeout: 60000 }, async t => {
   const f = await goBrowserFixture(t), { page } = f;
+  await page.route('**/api/clients', route => route.fulfill({ json: {
+    proxyUrl: 'http://127.0.0.1:1/v1',
+    clients: [
+      { id: 'codex', name: 'Codex', enabled: false, available: true, stale: false, detail: '未接入。' },
+      { id: 'opencode', name: 'OpenCode', enabled: false, available: true, stale: false, detail: '未接入。' },
+    ],
+  } }));
   let calls = 0, release; const gate = new Promise(resolve => { release = resolve; });
   let received; const hit = new Promise(resolve => { received = resolve; });
-  await page.route('**/api/opencode/sync', async route => { calls++; received(); await gate; await route.fulfill({ json: { modelCount: 1, configPath: '/synthetic/config', backupPath: '/synthetic/backup' } }); });
+  await page.route('**/api/clients/opencode/enabled', async route => { calls++; received(); await gate; await route.fulfill({ json: {
+    proxyUrl: 'http://127.0.0.1:1/v1',
+    clients: [
+      { id: 'codex', name: 'Codex', enabled: false, available: true, stale: false, detail: '未接入。' },
+      { id: 'opencode', name: 'OpenCode', enabled: true, available: true, stale: false, detail: '已接入。' },
+    ],
+  } }); });
   await f.login();
   await page.locator('nav [data-tab="setup"]').click();
-  page.once('dialog', dialog => dialog.dismiss()); await page.locator('#opencode-sync').click();
-  assert.equal(calls, 0);
-  page.once('dialog', dialog => dialog.accept()); await page.locator('#opencode-sync').click(); await hit;
-  await expect(page.locator('#opencode-sync')).toBeDisabled();
-  release(); await expect(page.locator('#opencode-sync-status')).toContainText('成功');
-  let release2; const gate2 = new Promise(resolve => { release2 = resolve; });
-  await page.unroute('**/api/opencode/sync');
-  await page.route('**/api/opencode/sync', async route => { calls++; await gate2; await route.fulfill({ status: 400, json: { error: { message: 'Synthetic configuration missing' } } }); });
-  page.once('dialog', dialog => dialog.accept()); await page.locator('#opencode-sync').click();
-  await expect.poll(() => calls).toBe(2); release2();
-  await expect(page.locator('#opencode-sync-status')).toContainText('Synthetic configuration missing');
+  await expect(page.locator('#client-list')).toContainText('Codex');
+  await expect(page.locator('#client-list')).toContainText('OpenCode');
+  const openCode = page.locator('.client-row[data-client-id="opencode"]');
+  const toggle = openCode.locator('.client-switch');
+  await expect(toggle).not.toBeChecked();
+  await toggle.click(); await hit;
+  await expect(toggle).toBeDisabled();
+  release(); await expect(openCode.locator('.client-state')).toContainText('已接入');
+  assert.equal(calls, 1);
+
+  await page.unroute('**/api/clients/opencode/enabled');
+  await page.route('**/api/clients/opencode/enabled', route => route.fulfill({ status: 400, json: { error: { message: 'Synthetic configuration missing' } } }));
+  page.once('dialog', dialog => dialog.accept());
+  await openCode.locator('.client-switch').click();
+  await expect(page.locator('#setup-error')).toContainText('Synthetic configuration missing');
 });
 
 test('built Go binary: old capabilities disable writes and compatibility operations', { timeout: 60000 }, async t => {

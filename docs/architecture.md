@@ -38,6 +38,7 @@ public/
 | 适配包目录与诊断隐私/Prompt | `internal/adroute/adapter_directory_state.go`, `diagnostics.go` | `compatibility_test.go`, `http_review_test.go` |
 | Codex TOML 配置接入/恢复 | `internal/adroute/codex_config.go` | `task3_test.go`, `cmd/adroute/main_test.go` |
 | OpenCode V2 显式 JSONC 同步 | `internal/adroute/opencode_sync.go` | `task3_test.go` |
+| 客户端开关与状态（Codex/OpenCode） | `internal/adroute/clients.go` | `clients_test.go` |
 | 实际二进制网页与官方 CLI 合成端到端验收 | `browser/go-fixture.js`, `browser/go-acceptance.test.js`, `browser/availability.test.js`, `integration/go-codex.test.js` | `npm test` |
 
 HTTP 层提供直接面向组/模型的管理 API 和 Responses 合同。管理令牌与代理令牌分离；配置变更先验证，再在 Store 锁内提交；请求接收时取得路由快照，避免请求途中被后续编辑改道。没有开放默认时省略 `model` 会得到明确无默认错误，只有字段缺失（不是 `null`、数字或空字符串）才代表跟随 `adroute/default`。快速测速从 HTTP 请求 context 派生 18 秒总截止时间，取消会关闭上游响应体。

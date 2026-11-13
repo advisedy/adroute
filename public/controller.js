@@ -6,9 +6,9 @@
   const MODEL_NAME_RE = /^[A-Za-z0-9._-]+$/;
   const GROUP_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-  let token = '', epoch = 0, state = null, tab = 'models', setup = null;
+  let token = '', epoch = 0, state = null, tab = 'models', setup = null, clients = null;
   let editingModel = null, filterGroup = '', deleting = null, nameTouched = false, formVersion = 0, discoverVersion = 0;
-  let loadingState = false, syncing = false, toastTimer;
+  let loadingState = false, toastTimer;
   let groupsVersion = 0, deleteVersion = 0, defaultIntent = '';
   let stateUpdateVersion = 0;
   let importDraft = null;
@@ -16,8 +16,19 @@
   let editingAggregate = null, aggregateVersion = 0, aggregateMemberRows = [];
   const pendingTests = new Map();
   const testResults = new Map();
+  const COLLAPSE_KEY = 'adroute.collapsedGroups';
   const collapsedGroups = new Set();
+  const expandedEntries = new Set();
+  const collections = { models: null, aggregates: null };
+  function loadCollapsedGroups() {
+    try {
+      const ids = JSON.parse(localStorage.getItem(COLLAPSE_KEY) || '[]');
+      if (Array.isArray(ids)) for (const id of ids) if (typeof id === 'string') collapsedGroups.add(id);
+    } catch { /* optional browser preference */ }
+  }
+  function saveCollapsedGroups() { try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...collapsedGroups])); } catch { /* storage may be unavailable */ } }
   const pendingAvailability = new Map();
+  const unknownExposure = new Set();
   const pendingWrites = new Map();
   const groupDrafts = new Map();
   const controllers = new Set();
@@ -25,11 +36,11 @@
 
   const BACKEND_UPDATE = '后台仍在运行旧版本，请先执行 adroute stop && adroute start，再刷新网页；已暂停配置修改。';
   const titles = {
-    models: ['模型管理', '添加模型，保存它们自己的上游地址与密钥，通过统一的本地地址调用。'],
+    models: ['模型工作台', '常用的留在眼前，备用的安心收起。'],
     aggregates: ['聚合', '把多个模型串成故障转移链；某个成员不可用时自动换下一个。'],
     requests: ['请求记录', '查看最近的路由结果，不保存对话正文。'],
     compatibility: ['兼容修复', '每个已保存模型条目独立绑定修复包，不继承组或其他模型设置。'],
-    setup: ['客户端接入', 'Codex 配置接入与恢复，以及 OpenCode 显式同步。'],
+    setup: ['客户端接入', '一键开关 Codex 与 OpenCode 的 AdRoute 接入。'],
   };
   const compatibility = window.createCompatibilityController({ api, getState: () => state, applyState, showTab });
 
@@ -48,7 +59,7 @@
     result.addEventListener('click', run); return result;
   }
   function backendReady() { return state?.capabilities?.models === true; }
-  function availabilityReady() { return backendReady() && state?.capabilities?.modelAvailability === true; }
+  function availabilityReady() { return backendReady() && state?.capabilities?.modelExposure === true; }
   function quickTestReady() { return backendReady() && state?.capabilities?.quickTest === true; }
   function aggregatesReady() { return backendReady() && state?.capabilities?.aggregates === true; }
   function remember(value) { try { if (value) sessionStorage.setItem(SESSION, value); else sessionStorage.removeItem(SESSION); } catch { /* tabs may block storage */ } }
@@ -78,16 +89,20 @@
     for (const controller of controllers) controller.abort();
     controllers.clear();
     for (const operation of pendingTests.values()) operation.controller.abort();
-    pendingTests.clear(); testResults.clear(); collapsedGroups.clear(); pendingAvailability.clear(); pendingWrites.clear(); groupDrafts.clear();
-    token = ''; remember(''); state = setup = editingModel = deleting = editingAggregate = null;
+    pendingTests.clear(); testResults.clear(); collapsedGroups.clear(); pendingAvailability.clear(); unknownExposure.clear(); pendingWrites.clear(); groupDrafts.clear();
+    expandedEntries.clear(); collections.models = collections.aggregates = null;
+    for (const kind of ['model', 'aggregate']) {
+      $(`${kind}-search`).value = ''; $(`${kind}-include-archived`).checked = false; $(`${kind}-exposure-filter`).value = 'all';
+    }
+    token = ''; remember(''); state = setup = clients = editingModel = deleting = editingAggregate = null;
     importDraft = null; $('import-config-file').value = '';
-    filterGroup = ''; tab = 'models'; loadingState = syncing = false; formVersion++; discoverVersion++; groupsVersion++; deleteVersion++; defaultIntent = '';
+    filterGroup = ''; tab = 'models'; loadingState = false; formVersion++; discoverVersion++; groupsVersion++; deleteVersion++; defaultIntent = '';
     for (const dialog of document.querySelectorAll('dialog')) if (dialog.open) dialog.close();
     for (const id of ['auth-form', 'model-form', 'group-create-form', 'aggregate-form']) $(id).reset();
     for (const id of ['codex-config', 'setup-url', 'model-list', 'aggregate-list', 'aggregate-members', 'all-requests', 'group-list', 'model-discover-results', 'delete-model-name', 'delete-model-route', 'request-detail-body', 'group-filter', 'default-model', 'request-meta-time', 'request-meta-group', 'request-meta-route', 'request-meta-model', 'request-meta-effort', 'request-meta-status', 'request-meta-duration']) { const element = $(id); if (element) element.replaceChildren(); }
     for (const id of ['client-base-url', 'client-api-key', 'admin-token']) $(id).value = '';
     $('client-api-key').type = 'password'; text('toggle-client-api-key', '显示');
-    notice('opencode-sync-status'); notice('global-error'); notice('default-status'); notice('auth-error', value);
+    notice('global-error'); notice('default-status'); notice('auth-error', value); notice('clients-refresh-status'); $('client-list').replaceChildren();
     $('catalog-notice').hidden = true; notice('catalog-status'); text('catalog-message', '');
     $('setup-content').hidden = $('app-shell').hidden = true; $('auth-screen').hidden = false; $('toast').hidden = true;
   }
@@ -145,7 +160,7 @@
     $('group-create-submit').disabled = !ready || pendingWrites.has('group-create-submit');
     $('default-model').disabled = !ready || pendingWrites.has('default-model');
     $('catalog-retry').disabled = !ready || pendingWrites.has('catalog-retry');
-    $('opencode-sync').disabled = !ready || syncing || pendingWrites.has('opencode-sync');
+    $('clients-refresh-all').disabled = !ready || !state?.capabilities?.clients || clientsBusy();
     for (const row of $('group-list').querySelectorAll('[data-group-id]')) {
       const group = state?.groups.find(item => item.id === row.dataset.groupId);
       const busy = !ready || pendingWrites.has(`group:${row.dataset.groupId}`);
@@ -156,22 +171,29 @@
       const id = row.dataset.modelId, busy = pendingWrites.has(`model:${id}`) || pendingWrites.has(`delete:${id}`) || pendingWrites.has(`copy:${id}`);
       for (const button of row.querySelectorAll('[data-model-action]')) {
         const action = button.dataset.modelAction;
-        button.disabled = !ready || busy || pendingTests.has(id) || pendingAvailability.has(id) || (action === 'test' && !quickTestReady()) || (action === 'copy' && state?.capabilities?.modelCopy !== true);
+        button.disabled = !ready || busy || pendingTests.has(id) || pendingAvailability.has(id) || (action === 'restore' && unknownExposure.has(id)) || (action === 'test' && !quickTestReady()) || (action === 'copy' && state?.capabilities?.modelCopy !== true);
         // "打开网站" stays inert until that entry has a saved website.
         if (action === 'open-website') button.disabled = button.disabled || !state?.models.find(item => item.id === id)?.website;
+        if (action === 'default') button.disabled = button.disabled || state?.models.find(item => item.id === id)?.disabled || pendingWrites.has('default-model');
       }
       const toggle = row.querySelector('[data-availability]');
-      toggle.disabled = !availabilityReady() || busy || pendingAvailability.has(id);
+      toggle.disabled = !availabilityReady() || busy || pendingAvailability.has(id) || unknownExposure.has(id) || state?.models.find(item => item.id === id)?.disabled;
     }
     $('add-aggregate').disabled = !ready;
     for (const card of $('aggregate-list').querySelectorAll('[data-aggregate-id]')) {
       const id = card.dataset.aggregateId;
       for (const button of card.querySelectorAll('button')) {
         if (button.dataset.aggregateAvailability) continue;
-        button.disabled = !ready;
+        button.disabled = !ready || (pendingWrites.has(`aggregate:${id}`) && button.dataset.aggregateEdit !== 'true') || pendingAvailability.has(`aggregate:${id}`) || (button.dataset.restoreAvailability === 'true' && unknownExposure.has(`aggregate:${id}`));
+        if (button.dataset.aggregateDefault) button.disabled = button.disabled || state.aggregates.find(a => a.id === id)?.disabled || !state.aggregates.find(a => a.id === id)?.openMemberCount || pendingWrites.has('default-model');
       }
       const toggle = card.querySelector('[data-aggregate-availability]');
-      if (toggle) toggle.disabled = !ready;
+      if (toggle) toggle.disabled = !aggregatesReady() || !availabilityReady() || pendingAvailability.has(`aggregate:${id}`) || pendingWrites.has(`aggregate:${id}`) || unknownExposure.has(`aggregate:${id}`) || state?.aggregates.find(item => item.id === id)?.disabled;
+    }
+    for (const control of document.querySelectorAll('[data-organization-key]')) {
+      const key = control.dataset.organizationKey;
+      const model = key.startsWith('model:') && state?.models.find(m => `model:${m.id}` === key);
+      control.disabled = !ready || state?.capabilities?.organization !== true || pendingWrites.has(key) || (model && (pendingTests.has(model.id) || pendingAvailability.has(model.id))) || (key.startsWith('aggregate:') && pendingAvailability.has(key));
     }
   }
 
@@ -199,9 +221,10 @@
     if (Number.isSafeInteger(state?.revision) && (!Number.isSafeInteger(value.revision) || value.revision < state.revision)) return;
     stateUpdateVersion++;
     state = value;
+    unknownExposure.clear();
     for (const id of collapsedGroups) if (!state.groups.some(group => group.id === id)) collapsedGroups.delete(id);
     $('initial-loading').hidden = $('state-unavailable').hidden = true;
-    notice('global-error', backendReady() ? (state.capabilities.modelAvailability === true ? '' : '当前后台不支持模型开放状态，请先重启 adroute。') : BACKEND_UPDATE);
+    notice('global-error', backendReady() ? (availabilityReady() ? '' : '当前后台不支持模型开放状态，请先重启 adroute。') : BACKEND_UPDATE);
     text('connection-status', backendReady() ? '● 已连接 · 本机服务' : '● 已连接 · 后台待重启');
     text('app-version', `AdRoute ${value.version}`);
     // Drop stale quick-test results whose upstream target changed elsewhere.
@@ -222,6 +245,7 @@
     if ($('groups-dialog').open) renderGroups();
     compatibility.update();
     showTab(tab, false);
+    if (tab === 'setup' && clients) loadClients({ quiet: true });
     syncPendingControls();
   }
 
@@ -249,12 +273,108 @@
     text('codex-config', setup.codexConfig);
   }
 
+  // ---- client switchboard -------------------------------------------------
+
+  function clientPending(id) { return pendingWrites.has(`client:${id}`); }
+  function clientsBusy() { return Boolean(clients) && clients.clients.some(item => clientPending(item.id)); }
+
+  function renderClients() {
+    const list = $('client-list');
+    if (!clients) { list.replaceChildren(); return; }
+    const nodes = [];
+    for (const client of clients.clients) {
+      const row = node('article', undefined, 'client-row');
+      row.dataset.clientId = client.id;
+
+      const head = node('div', undefined, 'client-row-head');
+      const title = node('div', undefined, 'client-title');
+      const dot = node('span', undefined, `client-dot${client.enabled ? (client.stale ? ' stale' : ' on') : ''}`);
+      title.append(dot, node('h3', client.name), node('code', client.id, 'client-id'));
+      title.append(node('span', client.enabled ? (client.stale ? '需要刷新' : '已接入') : '未接入', `client-state${client.enabled ? (client.stale ? ' stale' : ' on') : ''}`));
+      head.append(title);
+
+      const controls = node('div', undefined, 'client-controls');
+      const refresh = button('刷新', () => refreshClient(client), 'button subtle small-button');
+      // Refresh rewrites the model map, so it would silently turn the client
+      // back on. It is only a repair action for a client that is already on.
+      refresh.disabled = !backendReady() || !state?.capabilities?.clients || clientPending(client.id) || !client.available || !client.enabled;
+      refresh.title = client.enabled ? '用当前模型目录重新写入这个客户端的 AdRoute 配置' : '先打开开关，再刷新接入';
+
+      const toggle = document.createElement('input');
+      toggle.type = 'checkbox';
+      toggle.className = 'client-switch';
+      toggle.setAttribute('role', 'switch');
+      toggle.checked = client.enabled;
+      toggle.setAttribute('aria-label', `${client.name} 使用 AdRoute 接入`);
+      toggle.setAttribute('aria-checked', String(client.enabled));
+      toggle.disabled = !backendReady() || !state?.capabilities?.clients || clientPending(client.id) || !client.available;
+      toggle.addEventListener('change', () => setClientEnabled(client, toggle));
+      controls.append(refresh, toggle);
+      head.append(controls);
+      row.append(head);
+
+      const detail = node('p', client.detail || '', 'field-help client-detail');
+      if (client.configPath) detail.append(node('br'), node('code', client.configPath, 'client-path'));
+      row.append(detail);
+      nodes.push(row);
+    }
+    list.replaceChildren(...nodes);
+  }
+
+  function setClientBusy(id, busy) {
+    if (busy) pendingWrites.set(`client:${id}`, {}); else pendingWrites.delete(`client:${id}`);
+    syncPendingControls();
+  }
+
+  async function setClientEnabled(client, toggle) {
+    if (clientPending(client.id)) return;
+    const enabled = toggle.checked;
+    if (!enabled && !confirm(`关闭 ${client.name} 的 AdRoute 接入？会恢复/清空由 AdRoute 写入的内容，其他设置保留。`)) {
+      toggle.checked = true; return;
+    }
+    const started = epoch;
+    toggle.disabled = true;
+    setClientBusy(client.id, true); notice('setup-error');
+    try {
+      clients = await api(`/api/clients/${client.id}/enabled`, { method: 'POST', body: { enabled } });
+      if (started === epoch) renderClients();
+    } catch (error) {
+      if (!(error instanceof StaleRequest) && started === epoch) { notice('setup-error', error.message); toggle.checked = client.enabled; }
+    } finally { if (started === epoch) { setClientBusy(client.id, false); if (clients) renderClients(); } }
+  }
+
+  async function refreshClient(client) {
+    if (clientPending(client.id)) return;
+    const started = epoch;
+    setClientBusy(client.id, true); notice('setup-error');
+    renderClients();
+    try {
+      clients = await api(`/api/clients/${client.id}/refresh`, { method: 'POST', body: {} });
+      if (started === epoch) { renderClients(); toast(`${client.name} 接入已刷新。`); }
+    } catch (error) {
+      if (!(error instanceof StaleRequest) && started === epoch) notice('setup-error', error.message);
+    } finally { if (started === epoch) setClientBusy(client.id, false); }
+  }
+
+  async function loadClients({ quiet = false } = {}) {
+    if (!state?.capabilities?.clients) { $('client-list').replaceChildren(); return; }
+    if (!quiet) $('setup-loading').hidden = false;
+    const started = epoch;
+    try {
+      clients = await api('/api/clients');
+      if (started === epoch) { renderClients(); $('setup-content').hidden = false; }
+    } catch (error) {
+      if (!(error instanceof StaleRequest) && started === epoch && !quiet) { notice('setup-error', error.message); $('setup-retry').hidden = false; }
+    } finally { if (started === epoch && !quiet) $('setup-loading').hidden = true; }
+  }
+
   async function loadSetup() {
     $('setup-loading').hidden = false; $('setup-retry').hidden = true; notice('setup-error');
     const started = epoch;
     try {
       setup = await api('/api/setup');
       renderAccess(); $('setup-content').hidden = false;
+      await loadClients({ quiet: true });
     } catch (error) {
       if (!(error instanceof StaleRequest) && started === epoch) { notice('setup-error', error.message); $('setup-retry').hidden = false; }
     } finally { if (started === epoch) $('setup-loading').hidden = true; }
@@ -263,19 +383,107 @@
   // ---- model groups -----------------------------------------------------
 
   function renderGroupFilter() {
-    const container = $('group-filter'); container.replaceChildren();
-    const all = button(`全部模型 ${state.models.length}`, () => { filterGroup = ''; renderModels(); }, 'chip');
-    all.setAttribute('aria-pressed', String(filterGroup === ''));
-    if (filterGroup === '') all.classList.add('selected');
-    container.append(all);
-    for (const group of state.groups) {
-      const count = state.models.filter(model => model.groupId === group.id).length;
-      const chip = button(`${group.name} ${count}`, () => { filterGroup = group.id; renderModels(); }, 'chip');
-      chip.setAttribute('aria-pressed', String(filterGroup === group.id));
-      if (filterGroup === group.id) chip.classList.add('selected');
-      container.append(chip);
-    }
     if (filterGroup && !state.groups.some(group => group.id === filterGroup)) filterGroup = '';
+    const select = document.createElement('select');
+    select.setAttribute('aria-label', '按模型组筛选');
+    for (const [id, label] of [['', '全部分组'], ...state.groups.map(g => [g.id, g.name + (g.archived ? '（已归档）' : '')])]) {
+      const option = node('option', label); option.value = id; select.append(option);
+    }
+    select.value = filterGroup;
+    select.addEventListener('change', () => { filterGroup = select.value; renderModels(); });
+    $('group-filter').replaceChildren(select);
+  }
+
+  function isArchived(entry, kind = 'models') {
+    return !!entry.archived || (kind === 'models' && !!state.groups.find(g => g.id === entry.groupId)?.archived);
+  }
+
+  function collectionEntries(kind) {
+    const entries = state[kind] || [];
+    if (collections[kind] === null) collections[kind] = entries.some(e => e.favorite && !isArchived(e, kind)) ? 'favorites' : 'all';
+    for (const control of document.querySelectorAll(`[data-collection][data-kind="${kind}"]`)) {
+      control.setAttribute('aria-pressed', String(control.dataset.collection === collections[kind]));
+    }
+    const prefix = kind === 'models' ? 'model' : 'aggregate';
+    const query = $(`${prefix}-search`).value.trim().toLowerCase();
+    const include = $(`${prefix}-include-archived`).checked;
+    const exposure = $(`${prefix}-exposure-filter`).value;
+    return entries.filter(entry => {
+      const archived = isArchived(entry, kind);
+      if (collections[kind] === 'archived' ? !archived : archived && !include) return false;
+      // A search is global across groups and favorites. Filters resume when cleared.
+      if (!query && collections[kind] === 'favorites' && !entry.favorite) return false;
+      if (exposure !== 'all' && (exposure === 'open') !== (!entry.disabled && !entry.exposureDisabled)) return false;
+      const terms = [entry.name, entry.model || '', entry.groupName || '', entry.routeId, ...(entry.members || []).map(m => `${m.groupName} ${m.name} ${m.routeId}`)].join(' ').toLowerCase();
+      return !query || terms.includes(query);
+    });
+  }
+
+  function resetCollectionFilters(kind, collection = 'all', includeArchived = false) {
+    const prefix = kind === 'models' ? 'model' : 'aggregate';
+    collections[kind] = collection;
+    $(`${prefix}-search`).value = '';
+    $(`${prefix}-exposure-filter`).value = 'all';
+    $(`${prefix}-include-archived`).checked = includeArchived;
+  }
+
+  function revealSavedEntry(kind, entry) {
+    if (!entry) return;
+    const prefix = kind === 'models' ? 'model' : 'aggregate';
+    resetCollectionFilters(kind, isArchived(entry, kind) ? 'archived' : 'all');
+    if (kind === 'models') {
+      filterGroup = '';
+      collapsedGroups.delete(entry.groupId); saveCollapsedGroups();
+    }
+    renderModels();
+    document.querySelector(`[data-${prefix}-id="${entry.id}"]`)?.scrollIntoView({ block: 'nearest' });
+  }
+
+  async function updateOrganization(kind, entry, patch, control) {
+    const key = `${kind === 'models' ? 'model' : kind === 'groups' ? 'group' : 'aggregate'}:${entry.id}`;
+    if (state?.capabilities?.organization !== true || pendingWrites.has(key)) return;
+    const started = epoch;
+    await action(control, 'global-error', async () => {
+      try { applyState(await api(`/api/${kind}/${entry.id}/organization`, { method: 'PUT', body: patch })); }
+      catch (error) {
+        if (error instanceof StaleRequest) throw error;
+        try { applyState(await api('/api/state')); } catch (refreshError) {
+          if (refreshError instanceof StaleRequest) throw refreshError;
+          throw new Error('收纳结果暂未确认，请刷新状态；对外权限不受影响。');
+        }
+        throw error;
+      }
+      if (patch.archived !== undefined) toast(patch.archived ? '已归档；当前对外开放状态、默认与内部使用保持不变。' : '已恢复；对外开放状态保持不变。');
+    }, () => true, key);
+    if (started === epoch && state) renderModels();
+  }
+
+  function organizationButton(kind, entry, field) {
+    const archived = field === 'archived';
+    const value = archived ? !!entry.archived : !!entry.favorite;
+    const control = button(archived ? (value ? '恢复' : '归档') : (value ? '★' : '☆'), () => updateOrganization(kind, entry, { [field]: !value }, control), archived ? 'button subtle small-button' : 'favorite-button');
+    if (!archived) {
+      control.setAttribute('aria-label', value ? '取消收藏' : '收藏'); control.setAttribute('aria-pressed', String(value)); control.title = value ? '取消收藏' : '收藏到常用';
+    }
+    control.dataset.organizationKey = `${kind === 'models' ? 'model' : 'aggregate'}:${entry.id}`;
+    return control;
+  }
+
+  function groupArchiveButton(group) {
+    const control = button(group.archived ? '恢复分组' : '归档分组', () => updateOrganization('groups', group, { archived: !group.archived }, control), 'button subtle small-button group-archive');
+    control.dataset.organizationKey = `group:${group.id}`;
+    control.title = group.archived ? '恢复分组；单独归档的模型仍保持归档' : '仅收起整个分组，不改变对外开放状态';
+    return control;
+  }
+
+  function actionMenu(controls) {
+    const menu = node('details', undefined, 'action-menu');
+    const summary = node('summary', '更多');
+    const items = node('div', undefined, 'action-menu-items');
+    items.append(...controls); menu.append(summary, items);
+    menu.addEventListener('toggle', () => { if (menu.open) for (const other of document.querySelectorAll('.action-menu[open]')) if (other !== menu) other.open = false; });
+    items.addEventListener('click', event => { if (event.target.closest('button') && !event.target.closest('button').disabled) menu.open = false; });
+    return menu;
   }
 
   function renderGroups() {
@@ -313,7 +521,7 @@
         }, current, `group:${group.id}`);
       }, 'button subtle small-button danger');
       remove.dataset.groupDelete = 'true'; remove.disabled = group.modelCount > 0;
-      row.append(input, save, remove, node('span', `${group.modelCount} 个模型`, 'field-help'));
+      row.append(input, save, groupArchiveButton(group), remove, node('span', `${group.modelCount} 个模型${group.archived ? ' · 已归档' : ''}`, 'field-help'));
       list.append(row);
     }
     if (!state.groups.length) list.append(node('p', '还没有模型组。先在上方新建一个组，再添加模型。', 'field-help'));
@@ -326,32 +534,41 @@
     closeTestDetail();
     renderGroupFilter();
     const list = $('model-list'); list.replaceChildren();
-    text('model-count', state.models.length);
-    const groups = state.groups.filter(group => !filterGroup || group.id === filterGroup);
+    const searching = !!$('model-search').value.trim();
+    const visible = collectionEntries('models').filter(model => searching || !filterGroup || model.groupId === filterGroup);
+    text('model-count', `${visible.length} / ${state.models.length}`);
+    const groups = state.groups.filter(group => {
+      if (!searching && filterGroup && group.id !== filterGroup) return false;
+      if (visible.some(m => m.groupId === group.id)) return true;
+      if (searching || $('model-exposure-filter').value !== 'all') return false;
+      if (collections.models === 'archived') return group.archived;
+      return collections.models === 'all' && !group.archived && !state.models.some(m => m.groupId === group.id);
+    });
     if (!groups.length) {
       const empty = node('div', undefined, 'empty-panel');
-      empty.append(node('h2', '还没有添加模型'), node('p', '点击“添加模型”，填写上游 Base URL、上游 API Key 和真实模型 ID；组只用于分类。', 'muted'),
-        button('添加模型', () => openModelForm(), 'button primary'));
+      empty.append(node('h2', !state.models.length ? '还没有添加模型' : collections.models === 'favorites' && !searching ? '把常用模型收藏到这里' : '没有符合条件的模型'), node('p', '试试“全部”、调整搜索与筛选，或勾选“包含归档”。收藏与归档不会改变路由权限。', 'muted'));
       list.append(empty);
     }
     for (const group of groups) {
       const card = node('section', undefined, 'model-group');
       const header = node('div', undefined, 'model-group-header');
       const icon = node('span', '▦', 'model-group-icon'); icon.setAttribute('aria-hidden', 'true');
-      const models = state.models.filter(model => model.groupId === group.id);
+      const models = visible.filter(model => model.groupId === group.id);
       const content = node('div', undefined, 'model-group-content');
       content.id = `model-group-content-${group.id}`;
-      content.hidden = collapsedGroups.has(group.id);
+      content.hidden = !searching && collapsedGroups.has(group.id);
       const toggle = button('⌄', () => {
         content.hidden = !content.hidden;
         if (content.hidden) collapsedGroups.add(group.id); else collapsedGroups.delete(group.id);
+        saveCollapsedGroups();
         toggle.setAttribute('aria-expanded', String(!content.hidden));
         toggle.setAttribute('aria-label', `${content.hidden ? '展开' : '收起'} ${group.name}`);
       }, 'icon-button model-group-toggle');
       toggle.setAttribute('aria-expanded', String(!content.hidden));
       toggle.setAttribute('aria-label', `${content.hidden ? '展开' : '收起'} ${group.name}`);
       toggle.setAttribute('aria-controls', content.id);
-      header.append(icon, node('h2', group.name), node('span', `${models.length} 个模型`, 'model-group-count'), toggle);
+      header.append(icon, node('h2', group.name), node('span', `${models.length} 个模型`, 'model-group-count'), groupArchiveButton(group), toggle);
+      if (group.archived) header.append(badge('分组已归档', 'badge muted-badge'));
       card.append(header, content);
       for (const model of models) content.append(modelRow(model));
       if (!models.length) content.append(node('p', '暂无模型', 'model-group-empty'));
@@ -364,28 +581,55 @@
 
   function badge(label, className = 'badge') { return node('span', label, className); }
 
+  function exposureControl(entry, aggregate = false) {
+    const wrap = node('label', undefined, 'availability-control');
+    const toggle = document.createElement('input');
+    toggle.type = 'checkbox'; toggle.className = 'availability-light';
+    toggle.checked = !entry.disabled && !entry.exposureDisabled;
+    const key = aggregate ? `aggregate:${entry.id}` : entry.id;
+    toggle.indeterminate = unknownExposure.has(key);
+    if (aggregate) toggle.dataset.aggregateAvailability = entry.id;
+    else toggle.dataset.availability = entry.id;
+    toggle.setAttribute('aria-label', `对外开放${aggregate ? '聚合' : ''} ${aggregate ? entry.name : `${entry.groupName} / ${entry.name}`}`);
+    toggle.disabled = !availabilityReady() || pendingAvailability.has(key) || unknownExposure.has(key) || entry.disabled;
+    const label = node('span', pendingAvailability.has(key) ? '正在保存…' : unknownExposure.has(key) ? '状态待确认' : entry.disabled ? '已停用' : entry.exposureDisabled ? '对外关闭' : '对外开放');
+    wrap.title = '点击切换对外开放；关闭后外部不可获取或直接调用，不影响内部使用及聚合成员。';
+    toggle.addEventListener('change', () => toggleAvailability(entry, toggle.checked, toggle, label, aggregate));
+    wrap.append(toggle, label);
+    return wrap;
+  }
+
+  function restoreAvailabilityButton(entry, aggregate = false) {
+    const control = button('恢复启用', () => toggleAvailability(entry, true, control, control, aggregate, true), 'button subtle small-button');
+    control.dataset.restoreAvailability = 'true';
+    if (!aggregate) control.dataset.modelAction = 'restore';
+    control.title = '恢复内部可用性；不会改变对外开放设置。';
+    return control;
+  }
+
   function modelRow(model) {
     const row = node('article', undefined, 'model-row');
     row.dataset.modelId = model.id;
     const main = node('div', undefined, 'model-main');
     const title = node('div', undefined, 'model-title');
-    title.append(node('span', `${model.groupName} / ${model.name}`, 'sr-only'), node('h3', model.name));
-    if (model.disabled) title.append(badge('已关闭', 'badge muted-badge'));
+    title.append(organizationButton('models', model, 'favorite'), node('span', `${model.groupName} / ${model.name}`, 'sr-only'), node('h3', model.name));
+    if (isArchived(model)) title.append(badge(model.archived ? '已归档' : '随分组归档', 'badge muted-badge'));
+    if (model.disabled) title.append(badge('已停用', 'badge muted-badge'));
     if (state.defaultModelId === model.id) title.append(badge('网页默认'));
-    main.append(title);
+    main.append(title, routeIdentity(model));
 
     const meta = node('dl', undefined, 'model-meta');
     const pairs = [
-      ['对外模型 ID', model.routeId, true],
       ['上游真实模型 ID', model.model, true],
       ['上游地址', model.baseUrl, false],
     ];
     for (const [label, value, mono] of pairs) {
-      const wrap = node('div', undefined, label === '上游真实模型 ID' ? 'model-real-id' : 'sr-only');
+      const wrap = node('div', undefined, label === '上游真实模型 ID' ? 'model-real-id' : '');
       wrap.append(node('dt', label), node('dd', value, mono ? 'mono' : ''));
       meta.append(wrap);
     }
-    main.append(meta);
+    const connection = node('div', undefined, 'connection-details');
+    connection.append(meta, node('p', '上游密钥不在列表展示。编辑时留空即保留。', 'field-help'));
 
     const testRegion = node('div', undefined, 'model-test');
     testRegion.dataset.testRegion = model.id;
@@ -393,16 +637,7 @@
     renderTestRegion(model, testRegion);
 
     const controls = node('div', undefined, 'model-controls');
-    const toggleLabel = node('label', undefined, 'availability-control');
-    const toggle = document.createElement('input');
-    toggle.type = 'checkbox'; toggle.checked = !model.disabled; toggle.dataset.availability = model.id;
-    toggle.setAttribute('aria-label', `对外开放 ${model.groupName} / ${model.name}`);
-    const toggleText = node('span', model.disabled ? '已关闭' : '已开放');
-    const busy = pendingAvailability.has(model.id);
-    toggle.disabled = !availabilityReady() || busy;
-    if (busy) toggleText.textContent = '正在保存…';
-    toggle.addEventListener('change', () => toggleAvailability(model, toggle.checked, toggle, toggleText));
-    toggleLabel.append(toggle, toggleText);
+    const toggleLabel = exposureControl(model);
 
     const actions = node('div', undefined, 'model-actions');
     const testing = pendingTests.has(model.id);
@@ -422,16 +657,51 @@
       control.disabled = testing || !backendReady();
       if (control !== test) control.disabled = control.disabled || pendingAvailability.has(model.id);
     }
-    actions.append(test, edit, copy, website, remove);
+    const archive = organizationButton('models', model, 'archived');
+    const setDefault = button('设为默认', () => changeDefault(model.id), 'button subtle small-button');
+    setDefault.dataset.modelAction = 'default';
+    const details = entryDetails(model.id, connection);
+    actions.append(test, edit, actionMenu([setDefault, copy, website, ...(model.archived ? [] : [archive]), remove]), details.toggle);
+    if (model.archived) actions.prepend(archive);
+    if (model.disabled) actions.prepend(restoreAvailabilityButton(model));
     controls.append(toggleLabel, actions);
-    row.append(main, controls);
+    row.append(main, controls, details.wrap);
     return row;
+  }
+
+  function routeIdentity(entry) {
+    const line = node('div', undefined, 'route-identity');
+    line.append(node('code', entry.routeId));
+    const control = button('⧉', () => copy(entry.routeId), 'copy-route');
+    control.setAttribute('aria-label', '复制对外模型 ID'); control.title = '复制对外模型 ID';
+    line.append(control); return line;
+  }
+
+  // The toggle sits in the action row; only the expanded panel takes a line.
+  function entryDetails(id, content) {
+    const wrap = node('div', undefined, 'entry-details');
+    wrap.id = `entry-details-${id}`; wrap.hidden = !expandedEntries.has(id);
+    wrap.append(content);
+    const control = button(wrap.hidden ? '详情' : '收起详情', () => {
+      wrap.hidden = !wrap.hidden;
+      if (wrap.hidden) expandedEntries.delete(id); else expandedEntries.add(id);
+      control.textContent = wrap.hidden ? '详情' : '收起详情';
+      control.setAttribute('aria-expanded', String(!wrap.hidden));
+    }, 'text-button details-toggle');
+    control.setAttribute('aria-controls', wrap.id); control.setAttribute('aria-expanded', String(!wrap.hidden));
+    return { toggle: control, wrap };
   }
 
   async function copyModel(model, control) {
     if (state?.capabilities?.modelCopy !== true) return;
+    const knownIds = new Set(state.models.map(item => item.id));
     await action(control, 'global-error', async () => {
       applyState(await api(`/api/models/${model.id}/copy`, { method: 'POST' }));
+      const created = state.models.filter(item => !knownIds.has(item.id));
+      resetCollectionFilters('models', 'all', created.some(item => isArchived(item)));
+      filterGroup = '';
+      for (const item of created) collapsedGroups.delete(item.groupId);
+      saveCollapsedGroups(); renderModels();
       toast('模型已复制到同一组。');
     }, () => true, `copy:${model.id}`);
   }
@@ -472,6 +742,7 @@
       tooltip.hidden = false;
       info.setAttribute('aria-expanded', 'true');
       const anchor = info.getBoundingClientRect();
+      activeTestDetail.anchor = { top: anchor.top, left: anchor.left };
       const box = tooltip.getBoundingClientRect();
       tooltip.style.left = `${Math.max(12, Math.min(anchor.left, innerWidth - box.width - 12))}px`;
       const below = anchor.bottom + 8;
@@ -562,31 +833,46 @@
     select.disabled = !backendReady() || pendingWrites.has('default-model');
   }
 
-  async function toggleAvailability(model, enabled, control, label) {
-    if (pendingAvailability.has(model.id)) return;
-    const closingDefault = !enabled && state.defaultModelId === model.id;
-    if (closingDefault && !confirm('关闭当前网页默认模型会清空默认，不会自动切换其他模型；重新开放也不会恢复默认。继续？')) {
-      control.checked = true; label.textContent = '已开放'; return;
-    }
+  async function toggleAvailability(model, enabled, control, label, aggregate = false, restore = false) {
+    const key = aggregate ? `aggregate:${model.id}` : model.id;
+    if (pendingAvailability.has(key)) return;
+    const started = epoch;
     const operation = {};
-    pendingAvailability.set(model.id, operation);
+    pendingAvailability.set(key, operation);
     control.disabled = true; label.textContent = '正在保存…';
+    syncPendingControls();
     try {
-      applyState(await api(`/api/models/${model.id}/availability`, { method: 'PUT', body: { enabled } }));
+      applyState(await api(`/api/${aggregate ? 'aggregates' : 'models'}/${model.id}/${restore ? 'availability' : 'exposure'}`, { method: 'PUT', body: { enabled } }));
     } catch (error) {
-      if (!(error instanceof StaleRequest)) toast(`开放状态未更改：${error.message}`);
+      if (!(error instanceof StaleRequest) && started === epoch) {
+        // A lost response does not mean the mutation was rejected. Never show
+        // a reassuring red/private state until the server confirms it.
+        try {
+          applyState(await api('/api/state'));
+          const latest = (aggregate ? state.aggregates : state.models).find(item => item.id === model.id);
+          const unchanged = latest && (restore ? latest.disabled === model.disabled : latest.exposureDisabled === model.exposureDisabled);
+          toast(unchanged ? `开放状态未更改：${error.message}` : '请求响应异常，已重新确认服务器状态。');
+        } catch (refreshError) {
+          if (!(refreshError instanceof StaleRequest) && started === epoch) {
+            unknownExposure.add(key);
+            toast('无法确认保存结果，请刷新状态后再操作；请勿假定模型已对外关闭。');
+          }
+        }
+      }
     } finally {
-      if (pendingAvailability.get(model.id) === operation) { pendingAvailability.delete(model.id); renderModels(); }
+      if (pendingAvailability.get(key) === operation) { pendingAvailability.delete(key); renderModels(); }
     }
   }
 
-  async function changeDefault(value) {
+  async function changeDefault(value, errorId = 'default-status') {
     if (pendingWrites.has('default-model')) { renderDefaultSelect(); return; }
     defaultIntent = value;
     notice('default-status', '正在保存…');
-    await action($('default-model'), 'default-status', async () => {
+    await action($('default-model'), errorId, async () => {
       applyState(await api('/api/default', { method: 'POST', body: { modelId: value || null } }));
-      notice('default-status', value ? '默认模型已更新；其他开放模型不受影响。' : '默认模型已清空。');
+      const message = value ? '默认模型已更新；其他开放模型不受影响。' : '默认模型已清空。';
+      notice('default-status', message);
+      if (errorId !== 'default-status') toast(message);
     });
     if (state) renderDefaultSelect();
   }
@@ -640,7 +926,7 @@
     $('model-real-id').value = model?.model || '';
     $('model-website').value = model?.website || '';
     $('model-name').value = model?.name || '';
-    $('model-open').checked = model ? !model.disabled : true;
+    $('model-open').checked = model ? !model.exposureDisabled : true;
     $('model-open-row').hidden = Boolean(model);
     updateRoutePreview();
     $('model-dialog').showModal();
@@ -712,7 +998,7 @@
     };
     const apiKey = $('model-api-key').value.trim();
     if (apiKey || !editingModel) body.apiKey = apiKey;
-    if (!editingModel) body.disabled = !$('model-open').checked;
+    if (!editingModel) body.exposureDisabled = !$('model-open').checked;
     return body;
   }
 
@@ -875,7 +1161,7 @@
     $('aggregate-save').textContent = aggregate ? '保存修改' : '保存聚合';
     $('aggregate-name').value = aggregate?.name || '';
     $('aggregate-rounds').value = aggregate ? String(aggregate.maxRounds || 5) : '5';
-    $('aggregate-open').checked = aggregate ? !aggregate.disabled : true;
+    $('aggregate-open').checked = aggregate ? !aggregate.exposureDisabled : true;
     $('aggregate-open-row').hidden = Boolean(aggregate);
     $('aggregate-members').replaceChildren();
     if (aggregate) {
@@ -894,11 +1180,11 @@
   function renderAggregates() {
     const list = $('aggregate-list');
     list.replaceChildren();
-    const aggregates = state.aggregates || [];
-    text('aggregate-count', aggregates.length);
+    const aggregates = collectionEntries('aggregates');
+    text('aggregate-count', `${aggregates.length} / ${(state.aggregates || []).length}`);
     if (!aggregates.length) {
       const empty = node('div', undefined, 'empty-panel');
-      empty.append(node('h2', '还没有聚合'), node('p', '聚合把多个模型串成一条故障转移链；某个成员连不上时会自动换下一个，客户端只看到一个模型 ID。', 'muted'),
+      empty.append(node('h2', (state.aggregates || []).length ? '没有符合条件的聚合' : '还没有聚合'), node('p', '试试其他收纳视图或搜索条件。聚合按成员顺序故障转移，归档不会停用。', 'muted'),
         button('新建聚合', () => openAggregateForm(), 'button primary'));
       list.append(empty);
       return;
@@ -908,13 +1194,13 @@
       card.dataset.aggregateId = aggregate.id;
       const main = node('div', undefined, 'model-main');
       const title = node('div', undefined, 'aggregate-title');
-      title.append(node('h3', aggregate.name));
-      if (aggregate.disabled) title.append(badge('已关闭', 'badge muted-badge'));
+      title.append(organizationButton('aggregates', aggregate, 'favorite'), node('h3', aggregate.name));
+      if (aggregate.archived) title.append(badge('已归档', 'badge muted-badge'));
+      if (aggregate.disabled) title.append(badge('已停用', 'badge muted-badge'));
       if (state.defaultModelId === aggregate.id) title.append(badge('网页默认'));
       title.append(badge(`最多 ${aggregate.maxRounds} 轮`, 'badge muted-badge'));
       main.append(title);
-      const meta = node('p', `对外模型 ID：${aggregate.routeId}`, 'aggregate-meta mono');
-      main.append(meta);
+      main.append(routeIdentity(aggregate));
       const chips = node('div', undefined, 'aggregate-members-preview');
       aggregate.members.forEach((member, index) => {
         const chip = node('span', undefined, 'aggregate-member-chip' + (member.disabled || member.missing ? ' off' : ''));
@@ -925,38 +1211,28 @@
       });
       main.append(chips);
       const controls = node('div', undefined, 'model-controls');
-      const toggleLabel = node('label', undefined, 'availability-control');
-      const toggle = document.createElement('input');
-      toggle.type = 'checkbox'; toggle.checked = !aggregate.disabled; toggle.dataset.aggregateAvailability = aggregate.id;
-      toggle.setAttribute('aria-label', `对外开放聚合 ${aggregate.name}`);
-      const toggleText = node('span', aggregate.disabled ? '已关闭' : '已开放');
-      toggle.disabled = !aggregatesReady();
-      toggle.addEventListener('change', () => toggleAggregateAvailability(aggregate, toggle.checked, toggle, toggleText));
-      toggleLabel.append(toggle, toggleText);
+      const toggleLabel = exposureControl(aggregate, true);
       const actions = node('div', undefined, 'model-actions');
       const edit = button('编辑', () => openAggregateForm(aggregate), 'button subtle small-button');
+      edit.dataset.aggregateEdit = 'true';
       const remove = button('删除', () => deleteAggregate(aggregate), 'button subtle small-button danger');
       for (const control of [edit, remove]) control.disabled = !backendReady();
-      actions.append(edit, remove);
+      const archive = organizationButton('aggregates', aggregate, 'archived');
+      const setDefault = button('设为默认', () => changeDefault(aggregate.id, 'global-error'), 'button subtle small-button');
+      setDefault.dataset.aggregateDefault = aggregate.id;
+      const info = node('div', undefined, 'connection-details');
+      info.append(node('p', `最多 ${aggregate.maxRounds} 轮；连不上、超时或 429/5xx 时尝试下一成员。失败成员在 60 秒内排到后面。`, 'field-help'), node('p', '对外关闭或归档的成员仍可在内部选用；已停用的成员会跳过。', 'field-help'));
+      const details = entryDetails(aggregate.id, info);
+      actions.append(edit, actionMenu([setDefault, ...(aggregate.archived ? [] : [archive]), remove]), details.toggle);
+      if (aggregate.archived) actions.prepend(archive);
+      if (aggregate.disabled) actions.prepend(restoreAvailabilityButton(aggregate, true));
       controls.append(toggleLabel, actions);
       const wrap = node('div', undefined, 'model-row');
       wrap.style.borderTop = '0';
       wrap.style.padding = '0';
       wrap.append(main, controls);
-      card.append(wrap);
+      card.append(wrap, details.wrap);
       list.append(card);
-    }
-  }
-
-  async function toggleAggregateAvailability(aggregate, enabled, control, label) {
-    control.disabled = true; label.textContent = '正在保存…';
-    try {
-      applyState(await api(`/api/aggregates/${aggregate.id}/availability`, { method: 'PUT', body: { enabled } }));
-    } catch (error) {
-      if (!(error instanceof StaleRequest)) toast(`开放状态未更改：${error.message}`);
-      control.checked = !enabled;
-      label.textContent = aggregate.disabled ? '已关闭' : '已开放';
-      control.disabled = false;
     }
   }
 
@@ -1016,7 +1292,7 @@
       control.classList.toggle('selected', selected);
       if (selected) control.setAttribute('aria-current', 'page'); else control.removeAttribute('aria-current');
     }
-    if (tab === 'setup' && load && !setup) loadSetup();
+    if (tab === 'setup' && load) { if (!setup) loadSetup(); else if (!clients) loadClients(); }
     if (tab === 'compatibility' && load) compatibility.load();
   }
 
@@ -1058,12 +1334,29 @@
     $('auth-submit').disabled = true;
     try {
       const value = await api('/api/state');
+      loadCollapsedGroups();
       remember(token); $('admin-token').value = '';
       $('auth-screen').hidden = true; $('app-shell').hidden = false;
       applyState(value); await loadSetup(); renderAccess();
     } catch (error) { if (!(error instanceof StaleRequest)) clearSession(error.message); }
     finally { $('auth-submit').disabled = false; }
   }
+
+  for (const control of document.querySelectorAll('[data-collection]')) control.addEventListener('click', () => {
+    collections[control.dataset.kind] = control.dataset.collection;
+    if (state) renderModels();
+  });
+  for (const prefix of ['model', 'aggregate']) {
+    $(`${prefix}-search`).addEventListener('input', () => { if (state) renderModels(); });
+    for (const suffix of ['include-archived', 'exposure-filter']) $(`${prefix}-${suffix}`).addEventListener('change', () => { if (state) renderModels(); });
+  }
+  document.addEventListener('click', event => {
+    for (const menu of document.querySelectorAll('.action-menu[open]')) if (!menu.contains(event.target)) menu.open = false;
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    for (const menu of document.querySelectorAll('.action-menu[open]')) { menu.open = false; menu.querySelector('summary').focus(); }
+  });
 
   $('logout-button').addEventListener('click', () => clearSession());
   applyTheme(currentTheme());
@@ -1072,7 +1365,7 @@
   for (const control of document.querySelectorAll('[data-tab]')) control.addEventListener('click', () => showTab(control.dataset.tab));
   for (const control of document.querySelectorAll('[data-close-dialog]')) control.addEventListener('click', () => closeDialog(control.dataset.closeDialog));
   for (const dialog of document.querySelectorAll('dialog')) dialog.addEventListener('cancel', event => { event.preventDefault(); closeDialog(dialog.id); });
-  $('setup-back').addEventListener('click', () => showTab('models')); $('setup-retry').addEventListener('click', loadSetup);
+  $('setup-retry').addEventListener('click', () => { setup = null; loadSetup(); });
   $('request-filter').addEventListener('change', () => { if (state) renderRequests(); });
 
   $('add-model').addEventListener('click', () => openModelForm());
@@ -1107,12 +1400,13 @@
     if (!Number.isInteger(rounds) || rounds < 1 || rounds > 10) { aggregateFieldError('rounds', '重试轮数必须是 1~10 之间的整数。'); ok = false; }
     if (!ok) return;
     const body = { name: $('aggregate-name').value.trim(), members, maxRounds: rounds };
-    if (!context) body.disabled = !$('aggregate-open').checked;
+    if (!context) body.exposureDisabled = !$('aggregate-open').checked;
     action($('aggregate-save'), 'aggregate-error', async () => {
       const value = await api(context ? `/api/aggregates/${context.id}` : '/api/aggregates', { method: context ? 'PUT' : 'POST', body });
       applyState(value);
       if (!current()) return;
       closeDialog('aggregate-dialog');
+      if (!context) revealSavedEntry('aggregates', state.aggregates.find(a => a.name === body.name));
       toast(context ? '聚合已保存。' : '聚合已保存，客户端可以开始使用。');
     }, current, key);
   });
@@ -1147,7 +1441,11 @@
     const draft = importDraft;
     action($('import-confirm'), 'import-error', async () => {
       const result = await api('/api/config/import', { method: 'POST', body: draft });
-      applyState(result); closeDialog('import-dialog'); toast('配置导入成功。');
+      applyState(result);
+      if (importDraft !== draft || !$('import-dialog').open) return;
+      for (const kind of ['models', 'aggregates']) resetCollectionFilters(kind, 'all', (state[kind] || []).some(entry => isArchived(entry, kind)));
+      filterGroup = ''; collapsedGroups.clear(); saveCollapsedGroups(); renderModels();
+      closeDialog('import-dialog'); toast('配置导入成功。');
     }, () => $('import-dialog').open);
   });
   $('default-model').addEventListener('change', () => { if (state) changeDefault($('default-model').value); });
@@ -1201,6 +1499,7 @@
       applyState(value);
       if (!current()) return;
       closeDialog('model-dialog');
+      if (!context) revealSavedEntry('models', state.models.find(m => m.groupId === body.groupId && m.name === body.name));
       toast(context ? '模型已保存；对外 ID 与连接配置已更新。' : '模型已保存，客户端可以开始使用。');
     }, current, key);
   });
@@ -1239,15 +1538,16 @@
     });
   });
 
-  $('opencode-sync').addEventListener('click', () => {
-    if (syncing) return;
-    if (!confirm('将当前对外开放的模型同步到 OpenCode？已关闭模型不会同步。会备份并只替换现有 AdRoute 的模型列表，不修改其他设置。')) return;
-    syncing = true; const started = epoch;
-    action($('opencode-sync'), 'opencode-sync-status', async () => {
-      notice('opencode-sync-status', '正在同步…');
-      const result = await api('/api/opencode/sync', { method: 'POST', body: {} });
-      notice('opencode-sync-status', `同步成功${Number.isInteger(result.modelCount) ? ` · ${result.modelCount} 个模型` : ''}${result.configPath ? ` · ${result.configPath}` : ''}${result.backupPath ? ` · 备份：${result.backupPath}` : ''}。请在 OpenCode 中刷新模型目录。`);
-    }).finally(() => { if (started === epoch) { syncing = false; syncPendingControls(); } });
+  $('clients-refresh-all').addEventListener('click', async () => {
+    if (!backendReady() || !state?.capabilities?.clients || clientsBusy()) return;
+    const started = epoch;
+    $('clients-refresh-all').disabled = true; notice('setup-error'); notice('clients-refresh-status', '正在刷新…');
+    try {
+      clients = await api('/api/clients/refresh', { method: 'POST', body: {} });
+      if (started === epoch) { renderClients(); notice('clients-refresh-status', '已刷新已接入的客户端。'); }
+    } catch (error) {
+      if (!(error instanceof StaleRequest) && started === epoch) { notice('clients-refresh-status'); notice('setup-error', error.message); }
+    } finally { if (started === epoch) syncPendingControls(); }
   });
 
   for (const [id, get] of Object.entries({
@@ -1274,7 +1574,11 @@
     }
   });
   document.addEventListener('scroll', event => {
-    if (activeTestDetail && !activeTestDetail.tooltip.contains(event.target)) closeTestDetail();
+    if (!activeTestDetail || activeTestDetail.tooltip.contains(event.target)) return;
+    // An anchor click can auto-scroll before opening, with the event delivered later.
+    // Dismiss only when the anchor actually moved since the preview was positioned.
+    const anchor = activeTestDetail.info.getBoundingClientRect();
+    if (anchor.top !== activeTestDetail.anchor.top || anchor.left !== activeTestDetail.anchor.left) closeTestDetail();
   }, true);
   window.addEventListener('resize', closeTestDetail);
   window.addEventListener('hashchange', () => {

@@ -88,6 +88,7 @@ test('website field saves, and the row opens it only when present', { timeout: 9
   await f.login();
 
   // No website saved yet: the button exists but is disabled.
+  await row(page, model.id).locator('summary').click();
   const openSite = row(page, model.id).getByRole('button', { name: '打开网站' });
   await expect(openSite).toBeVisible();
   await expect(openSite).toBeDisabled();
@@ -101,6 +102,7 @@ test('website field saves, and the row opens it only when present', { timeout: 9
   await expect(page.locator('#model-dialog')).toBeHidden();
 
   await expect.poll(async () => (await f.state()).models.find(m => m.id === model.id)?.website).toBe('https://example.com/models');
+  await row(page, model.id).locator('summary').click();
   await expect(openSite).toBeEnabled();
   await expect(openSite).toHaveAttribute('title', 'https://example.com/models');
 
@@ -134,5 +136,6 @@ test('website field saves, and the row opens it only when present', { timeout: 9
   await page.locator('#model-save').click();
   await expect(page.locator('#model-dialog')).toBeHidden();
   await expect.poll(async () => (await f.state()).models.find(m => m.id === model.id)?.website ?? '').toBe('');
+  await row(page, model.id).locator('summary').click();
   await expect(openSite).toBeDisabled();
 });

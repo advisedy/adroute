@@ -23,16 +23,16 @@ func (a *HTTPApp) stateJSON() map[string]any {
 				continue
 			}
 			total++
-			if !m.Disabled {
+			if !m.Disabled && !m.ExposureDisabled {
 				open++
 			}
 		}
-		groups = append(groups, map[string]any{"id": g.ID, "name": g.Name, "modelCount": total, "openCount": open})
+		groups = append(groups, map[string]any{"id": g.ID, "name": g.Name, "archived": g.Archived, "modelCount": total, "openCount": open})
 	}
 	models := []map[string]any{}
 	for _, m := range st.Models {
 		r := routeFor(st, m)
-		models = append(models, map[string]any{"id": m.ID, "groupId": m.GroupID, "groupName": r.GroupName, "name": m.Name, "model": m.Model, "baseUrl": m.BaseURL, "apiKey": m.APIKey, "website": m.Website, "disabled": m.Disabled, "open": !m.Disabled, "profile": m.Profile, "routeId": r.RouteID})
+		models = append(models, map[string]any{"id": m.ID, "groupId": m.GroupID, "groupName": r.GroupName, "name": m.Name, "model": m.Model, "baseUrl": m.BaseURL, "apiKey": m.APIKey, "website": m.Website, "disabled": m.Disabled, "exposureDisabled": m.ExposureDisabled, "favorite": m.Favorite, "archived": m.Archived, "open": !m.Disabled && !m.ExposureDisabled, "profile": m.Profile, "routeId": r.RouteID})
 	}
 	aggregates := []map[string]any{}
 	for _, agg := range st.Aggregates {
@@ -55,7 +55,7 @@ func (a *HTTPApp) stateJSON() map[string]any {
 			}
 			members = append(members, entry)
 		}
-		aggregates = append(aggregates, map[string]any{"id": agg.ID, "name": agg.Name, "routeId": AggregateRouteID(agg.Name), "members": members, "memberCount": len(agg.Members), "openMemberCount": open, "maxRounds": agg.MaxRounds, "disabled": agg.Disabled, "open": !agg.Disabled})
+		aggregates = append(aggregates, map[string]any{"id": agg.ID, "name": agg.Name, "routeId": AggregateRouteID(agg.Name), "members": members, "memberCount": len(agg.Members), "openMemberCount": open, "maxRounds": agg.MaxRounds, "disabled": agg.Disabled, "exposureDisabled": agg.ExposureDisabled, "favorite": agg.Favorite, "archived": agg.Archived, "open": !agg.Disabled && !agg.ExposureDisabled})
 	}
 	out := map[string]any{
 		"version":        ServiceVersion,
@@ -73,12 +73,15 @@ func (a *HTTPApp) stateJSON() map[string]any {
 			"models":             true,
 			"aggregates":         true,
 			"modelAvailability":  true,
+			"modelExposure":      true,
+			"organization":       true,
 			"modelCopy":          true,
 			"configTransfer":     true,
 			"quickTest":          true,
 			"quickTestTimeoutMs": QuickTestTimeout.Milliseconds(),
 			"compatibility":      true,
 			"adapterDirectory":   true,
+			"clients":            true,
 		},
 	}
 	a.requestMu.Lock()
@@ -120,6 +123,45 @@ func (a *HTTPApp) managementAPI(w http.ResponseWriter, r *http.Request) bool {
 	}
 	if path == "api/state" && r.Method == "GET" {
 		a.json(w, 200, a.stateJSON())
+		return true
+	}
+	if strings.HasPrefix(path, "api/clients") && a.clientsAPI(w, r, path, parts) {
+		return true
+	}
+	if len(parts) == 4 && parts[0] == "api" && (parts[1] == "models" || parts[1] == "aggregates") && parts[3] == "exposure" && r.Method == http.MethodPut {
+		var v struct {
+			Enabled *bool `json:"enabled"`
+		}
+		if !decode(64<<10, &v) {
+			return true
+		}
+		if v.Enabled == nil {
+			a.fail(w, appError("enabled must be a boolean", 400, "INVALID_REQUEST"))
+			return true
+		}
+		var err error
+		if parts[1] == "models" {
+			err = s.SetModelExposure(parts[2], *v.Enabled)
+		} else {
+			err = s.SetAggregateExposure(parts[2], *v.Enabled)
+		}
+		if err != nil {
+			a.fail(w, err)
+		} else {
+			writeState(200)
+		}
+		return true
+	}
+	if len(parts) == 4 && parts[0] == "api" && (parts[1] == "groups" || parts[1] == "models" || parts[1] == "aggregates") && parts[3] == "organization" && r.Method == http.MethodPut {
+		var input OrganizationInput
+		if !decode(64<<10, &input) {
+			return true
+		}
+		if err := s.SetOrganization(parts[1], parts[2], input); err != nil {
+			a.fail(w, err)
+		} else {
+			writeState(200)
+		}
 		return true
 	}
 	if path == "api/config/export" && r.Method == http.MethodGet {

@@ -51,6 +51,12 @@ export async function goBrowserFixture(t, { viewport = { width: 1440, height: 10
   return { temp, bin, home, codexHome, url, token, child, page, context, api, state, login };
 }
 
+// Secondary row actions live behind a keyboard-accessible details menu.
+export async function openRowActions(entry) {
+  const menu = entry.locator('.action-menu');
+  if (!(await menu.evaluate(el => el.open))) await menu.locator('summary').click();
+}
+
 export async function goSavedGroup(f, name) {
   const before = await f.state();
   if (before.groups.some(group => group.name === name)) return before.groups.find(group => group.name === name);

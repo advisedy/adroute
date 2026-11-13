@@ -196,9 +196,14 @@ AdRoute 只接受当前 version 6 配置，不会读取旧 `auth.json`、旧 `pr
 
 `adroute stop` 或 `adroute codex restore` 会逐项恢复仍与 AdRoute 写入值一致的字段，尽量保留之后的用户编辑；不会直接用整份旧备份覆盖新配置。原始备份保存在私有数据目录中。
 
-## OpenCode 同步
+## 客户端接入（Codex / OpenCode）
 
-同步是网页中明确触发的操作，不会自动调用模型，也不会在保存条目时运行。它只更新既有 OpenCode 配置内的 AdRoute 模型映射，并创建私有原文件备份。目标配置必须已有兼容 Responses 的 `providers.adroute` 设置；遇到缺失或不兼容会报错，不会猜配置或创建新配置。同步不启动或重载 OpenCode。详见 [OpenCode 同步说明](opencode-sync.md)。
+“客户端接入”页只列出本版本支持的两个客户端，每个一行：
+
+- **Codex**：打开开关会备份并合并 `CODEX_HOME/config.toml`（写入 `adroute/default`、模型目录和 provider），关闭开关会恢复仍由 AdRoute 管理的字段并保留你后来修改的内容。网页关闭后，`adroute start` 不会再把 Codex 自动打开；重新打开开关或删除 `ADROUTE_HOME/clients.json` 可恢复自动接入。
+- **OpenCode**：打开开关会把当前对外开放的模型写入既有 OpenCode 配置的 `providers.adroute.models`，关闭开关会清空该模型映射并保留 provider、端点与凭据。每个模型同时写入 `low / medium / high / xhigh / max` 五档推理菜单（与 Codex 目录共用同一份档位表），OpenCode 选中的档位会作为 `reasoning.effort` 透传给上游；这是通用默认值，不是上游能力保证，选到上游不认的档位会报错，届时编辑该条目的 `variants` 即可。OpenCode 必须已有兼容 Responses 的 `providers.adroute` 设置；缺失或不兼容时会报错，不会猜配置或创建新配置。`package` 接受 `aisdk:@ai-sdk/openai`、`@opencode/ai/providers/openai`、`@opencode/ai/providers/openai/responses`、`@opencode/ai/providers/openai-compatible/responses`（都会请求 `/v1/responses`）；Chat Completions 包会被拒绝，因为 adroute 不提供该协议。`opencode.json` 与 `opencode.jsonc` 同时存在时，写入已声明 `providers.adroute` 的那一个；两份都声明时写 `opencode.jsonc`，因为 OpenCode 最后加载它。
+
+每行右侧的“刷新接入”会用当前模型目录重写该客户端的 AdRoute 部分，仅在已接入时可用——未接入的客户端会拒绝刷新，避免刷新变相打开开关；顶部“刷新全部接入”只刷新已打开的客户端。页面还会显示配置路径与“已接入 / 未接入 / 需要刷新”，配置被外部改动时状态变为需要刷新。接入操作只改配置文件，不启动或重载客户端；保存模型或切换开放状态不会自动写外部文件。详见 [OpenCode 同步说明](opencode-sync.md)。
 
 ## Responses 兼容包与诊断
 

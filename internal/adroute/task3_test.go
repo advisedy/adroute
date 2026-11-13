@@ -169,15 +169,86 @@ func TestOpenCodeSyncGlobalPathAmbiguityAndOverrides(t *testing.T) {
 			t.Fatal(e)
 		}
 	}
-	models := []SyncModel{}
-	if _, e := SyncOpenCode(OpenCodeSyncOptions{Models: models, Env: map[string]string{"HOME": d}}); !hasCode(e, "OPENCODE_CONFIG_AMBIGUOUS") {
-		t.Fatalf("ambiguous config: %v", e)
+	models := []SyncModel{{Slug: "adroute/a/b", DisplayName: "B"}}
+	// Both default files exist and both declare providers.adroute. OpenCode loads
+	// the .jsonc copy last, so that is the file whose models it actually applies.
+	r, e := SyncOpenCode(OpenCodeSyncOptions{Models: models, Env: map[string]string{"HOME": d}})
+	if e != nil {
+		t.Fatalf("resolvable ambiguity refused: %v", e)
+	}
+	if filepath.Base(r.ConfigPath) != "opencode.jsonc" {
+		t.Fatalf("wrote to %s, want the file OpenCode applies last", r.ConfigPath)
+	}
+	if got := readConfigForTest(t, filepath.Join(dir, "opencode.json")); got != raw {
+		t.Fatal("the shadowed .json copy was modified")
+	}
+	if got := readConfigForTest(t, filepath.Join(dir, "opencode.jsonc")); !strings.Contains(got, "adroute/a/b") {
+		t.Fatalf("models not written to the applied copy: %s", got)
 	}
 	if _, e := SyncOpenCode(OpenCodeSyncOptions{Models: models, Env: map[string]string{"HOME": d, "OPENCODE_CONFIG_DIR": "elsewhere"}}); !hasCode(e, "OPENCODE_CONFIG_PATH") {
 		t.Fatalf("override not refused: %v", e)
 	}
 	if _, e := SyncOpenCode(OpenCodeSyncOptions{Models: models, ConfigPath: filepath.Join(d, "missing.json")}); !hasCode(e, "OPENCODE_CONFIG_MISSING") {
 		t.Fatalf("missing explicit config: %v", e)
+	}
+}
+
+// Two files are only ambiguous when nothing tells us which one owns the
+// provider. A single owner is written in place, and its sibling is untouched.
+func TestOpenCodeSyncBothFilesSelectsTheSoleProviderOwner(t *testing.T) {
+	for _, owner := range []string{"opencode.json", "opencode.jsonc"} {
+		t.Run(owner, func(t *testing.T) {
+			d := t.TempDir()
+			dir := filepath.Join(d, ".config", "opencode")
+			if e := os.MkdirAll(dir, 0700); e != nil {
+				t.Fatal(e)
+			}
+			provider := `{"providers":{"adroute":{"package":"aisdk:@ai-sdk/openai","settings":{"baseURL":"http://127.0.0.1/v1","apiKey":"x"}}}}`
+			other := `{"$schema":"https://opencode.ai/config.json","plugin":["x"]}`
+			files := map[string]string{"opencode.json": other, "opencode.jsonc": other}
+			files[owner] = provider
+			for name, body := range files {
+				if e := os.WriteFile(filepath.Join(dir, name), []byte(body), 0600); e != nil {
+					t.Fatal(e)
+				}
+			}
+			r, e := SyncOpenCode(OpenCodeSyncOptions{Models: []SyncModel{{Slug: "adroute/a/b", DisplayName: "B"}}, Env: map[string]string{"HOME": d}})
+			if e != nil {
+				t.Fatalf("sole owner not used: %v", e)
+			}
+			if r.ConfigPath != filepath.Join(dir, owner) {
+				t.Fatalf("wrote %s, want the only provider owner %s", r.ConfigPath, owner)
+			}
+			for name, body := range files {
+				got := readConfigForTest(t, filepath.Join(dir, name))
+				if name == owner && !strings.Contains(got, "adroute/a/b") {
+					t.Fatalf("%s did not receive models: %s", name, got)
+				}
+				if name != owner && got != body {
+					t.Fatalf("%s was modified: %s", name, got)
+				}
+			}
+		})
+	}
+	if _, e := SyncOpenCode(OpenCodeSyncOptions{Models: []SyncModel{}, Env: map[string]string{"HOME": t.TempDir()}}); !hasCode(e, "OPENCODE_CONFIG_MISSING") {
+		t.Fatalf("no config: %v", e)
+	}
+}
+
+func TestOpenCodeSyncRefusesAmbiguityWithoutProviderOwner(t *testing.T) {
+	d := t.TempDir()
+	dir := filepath.Join(d, ".config", "opencode")
+	if e := os.MkdirAll(dir, 0700); e != nil {
+		t.Fatal(e)
+	}
+	for _, name := range []string{"opencode.json", "opencode.jsonc"} {
+		if e := os.WriteFile(filepath.Join(dir, name), []byte(`{"$schema":"https://opencode.ai/config.json"}`), 0600); e != nil {
+			t.Fatal(e)
+		}
+	}
+	_, e := SyncOpenCode(OpenCodeSyncOptions{Models: []SyncModel{}, Env: map[string]string{"HOME": d}})
+	if !hasCode(e, "OPENCODE_CONFIG_AMBIGUOUS") {
+		t.Fatalf("neither file owns the provider: %v", e)
 	}
 }
 
@@ -765,5 +836,158 @@ func TestTask3CodexConfigRoundTripActiveProfile(t *testing.T) {
 	b, _ = os.ReadFile(p)
 	if string(b) != original {
 		t.Fatalf("roundtrip mismatch: %q", b)
+	}
+}
+
+// Only runtime packages that reach the gateway as /v1/responses may be synced.
+// adroute serves no chat completions route, so a chat package would publish
+// models that cannot answer.
+func TestOpenCodeSyncAcceptsResponsesRuntimePackagesOnly(t *testing.T) {
+	for _, pkg := range []string{"aisdk:@ai-sdk/openai", "@opencode/ai/providers/openai", "@opencode/ai/providers/openai/responses", "@opencode/ai/providers/openai-compatible/responses"} {
+		t.Run(pkg, func(t *testing.T) {
+			d := t.TempDir()
+			p := filepath.Join(d, "c.json")
+			raw := `{"providers":{"adroute":{"package":"` + pkg + `","settings":{"baseURL":"http://127.0.0.1/v1","apiKey":"x"}}}}`
+			if e := os.WriteFile(p, []byte(raw), 0600); e != nil {
+				t.Fatal(e)
+			}
+			r, e := SyncOpenCode(OpenCodeSyncOptions{Models: []SyncModel{{Slug: "adroute/a/b", DisplayName: "B"}}, ConfigPath: p})
+			if e != nil {
+				t.Fatalf("%s refused: %v", pkg, e)
+			}
+			if !r.Changed || r.ModelCount != 1 {
+				t.Fatalf("%s: %#v", pkg, r)
+			}
+		})
+	}
+	for _, pkg := range []string{"aisdk:@ai-sdk/openai-compatible", "@opencode/ai/providers/openai/chat", "@opencode/ai/providers/anthropic", "", "aisdk:@ai-sdk/openai/responses"} {
+		t.Run("reject:"+pkg, func(t *testing.T) {
+			d := t.TempDir()
+			p := filepath.Join(d, "c.json")
+			raw := `{"providers":{"adroute":{"package":"` + pkg + `","settings":{"baseURL":"http://127.0.0.1/v1","apiKey":"x"}}}}`
+			if e := os.WriteFile(p, []byte(raw), 0600); e != nil {
+				t.Fatal(e)
+			}
+			_, e := SyncOpenCode(OpenCodeSyncOptions{Models: []SyncModel{}, ConfigPath: p})
+			if !hasCode(e, "OPENCODE_PROVIDER_INCOMPATIBLE") {
+				t.Fatalf("%q accepted: %v", pkg, e)
+			}
+			if got := readConfigForTest(t, p); got != raw {
+				t.Fatal("rejected package modified the config")
+			}
+		})
+	}
+}
+
+// The published models carry the default reasoning menu so a client can pick a
+// level without hand-editing opencode.json. The levels are a menu, not a
+// guarantee: adroute forwards reasoning.effort unchanged, so an upstream that
+// refuses one reports the error to the user.
+func TestOpenCodeSyncPublishesReasoningVariants(t *testing.T) {
+	d := t.TempDir()
+	p := filepath.Join(d, "c.json")
+	raw := `{"providers":{"adroute":{"package":"aisdk:@ai-sdk/openai","settings":{"baseURL":"http://127.0.0.1/v1","apiKey":"x"}}}}`
+	if e := os.WriteFile(p, []byte(raw), 0600); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := SyncOpenCode(OpenCodeSyncOptions{Models: []SyncModel{{Slug: "adroute/a/b", DisplayName: "B"}}, ConfigPath: p}); e != nil {
+		t.Fatal(e)
+	}
+	parsed, e := parseJSONC([]byte(readConfigForTest(t, p)))
+	if e != nil {
+		t.Fatal(e)
+	}
+	model, _ := parsed.props["providers"].props["adroute"].props["models"].props["adroute/a/b"].value.(map[string]any)
+	variants, _ := model["variants"].([]any)
+	if len(variants) != len(ReasoningLevels) {
+		t.Fatalf("variants = %#v", model["variants"])
+	}
+	for i, want := range ReasoningLevels {
+		v, _ := variants[i].(map[string]any)
+		settings, _ := v["settings"].(map[string]any)
+		if v["id"] != want || settings["reasoningEffort"] != want {
+			t.Fatalf("variant %d = %#v, want %s", i, v, want)
+		}
+	}
+	// The map is idempotent: a second sync with the same catalog changes nothing.
+	r, e := SyncOpenCode(OpenCodeSyncOptions{Models: []SyncModel{{Slug: "adroute/a/b", DisplayName: "B"}}, ConfigPath: p})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if r.Changed || r.BackupPath != "" {
+		t.Fatalf("repeat sync rewrote the file: %#v", r)
+	}
+}
+
+// An entry published before variants existed gains them on the next sync,
+// because the models map is compared semantically.
+func TestOpenCodeSyncUpgradesEntriesWithoutVariants(t *testing.T) {
+	d := t.TempDir()
+	p := filepath.Join(d, "c.json")
+	raw := `{"providers":{"adroute":{"package":"aisdk:@ai-sdk/openai","settings":{"baseURL":"http://127.0.0.1/v1","apiKey":"x"},"models":{"adroute/a/b":{"modelID":"adroute/a/b","name":"B"}}}}}`
+	if e := os.WriteFile(p, []byte(raw), 0600); e != nil {
+		t.Fatal(e)
+	}
+	r, e := SyncOpenCode(OpenCodeSyncOptions{Models: []SyncModel{{Slug: "adroute/a/b", DisplayName: "B"}}, ConfigPath: p})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if !r.Changed {
+		t.Fatal("entry without variants was treated as up to date")
+	}
+	if got := readConfigForTest(t, p); !strings.Contains(got, `"variants"`) {
+		t.Fatalf("variants not added: %s", got)
+	}
+}
+
+// Every external client must be offered the same reasoning levels. The two
+// renderings differ in shape but never in content, so a level added to one
+// client cannot silently go missing from the other.
+func TestReasoningLevelsAreSharedByEveryClient(t *testing.T) {
+	if len(ReasoningLevels) == 0 {
+		t.Fatal("no reasoning levels published")
+	}
+	seen := map[string]bool{}
+	for _, level := range ReasoningLevels {
+		if strings.TrimSpace(level) != level || level == "" {
+			t.Fatalf("invalid level %q", level)
+		}
+		if seen[level] {
+			t.Fatalf("duplicate level %q", level)
+		}
+		seen[level] = true
+	}
+
+	// Codex catalog: supported_reasoning_levels[].effort
+	entry := catalogEntry("adroute/a/b", "B", 0)
+	codex, _ := entry["supported_reasoning_levels"].([]map[string]string)
+	if len(codex) != len(ReasoningLevels) {
+		t.Fatalf("codex levels = %#v", codex)
+	}
+	for i, level := range ReasoningLevels {
+		if codex[i]["effort"] != level {
+			t.Fatalf("codex level %d = %q, want %q", i, codex[i]["effort"], level)
+		}
+	}
+
+	// OpenCode config: models[].variants[].id with reasoningEffort.
+	variants := openCodeReasoningVariants()
+	if len(variants) != len(ReasoningLevels) {
+		t.Fatalf("opencode variants = %#v", variants)
+	}
+	for i, level := range ReasoningLevels {
+		v, _ := variants[i].(map[string]any)
+		settings, _ := v["settings"].(map[string]any)
+		if v["id"] != level || settings["reasoningEffort"] != level {
+			t.Fatalf("opencode variant %d = %#v, want %q", i, v, level)
+		}
+	}
+
+	// The default must not promise a level the menu omits.
+	if seen[defaultReasoningLevel] {
+		t.Fatalf("default level %q must stay outside the published menu", defaultReasoningLevel)
+	}
+	if entry["default_reasoning_level"] != defaultReasoningLevel {
+		t.Fatalf("catalog default = %#v", entry["default_reasoning_level"])
 	}
 }

@@ -353,6 +353,9 @@ func ResolveState(st State, model string) (Route, error) {
 	if model == "" || utf16Length(model) > 300 || strings.TrimSpace(model) == "" || strings.ContainsFunc(model, unicode.IsControl) {
 		return Route{}, appError("invalid model", 400, "INVALID_MODEL")
 	}
+	if err := publicExposureError(st, model); err != nil {
+		return Route{}, err
+	}
 	if model == DefaultRouteID {
 		if st.DefaultModelID != "" {
 			for _, m := range st.Models {
@@ -391,6 +394,9 @@ func ResolveState(st State, model string) (Route, error) {
 func ResolveChain(st State, model string) ([]Route, error) {
 	if model == "" || utf16Length(model) > 300 || strings.TrimSpace(model) == "" || strings.ContainsFunc(model, unicode.IsControl) {
 		return nil, appError("invalid model", 400, "INVALID_MODEL")
+	}
+	if err := publicExposureError(st, model); err != nil {
+		return nil, err
 	}
 	if model == DefaultRouteID {
 		if st.DefaultModelID == "" {
@@ -440,6 +446,29 @@ func ResolveChain(st State, model string) ([]Route, error) {
 	return nil, appError("model route not found", 404, "MODEL_ROUTE_NOT_FOUND")
 }
 
+// publicExposureError gates only the requested public entry, never its members.
+// A default alias is subject to the target's exposure without clearing the
+// internal default selection.
+func publicExposureError(st State, model string) error {
+	for _, m := range st.Models {
+		if (model == DefaultRouteID && st.DefaultModelID == m.ID) || model == routeFor(st, m).RouteID {
+			if m.ExposureDisabled {
+				return appError("model is not publicly exposed", 403, "MODEL_NOT_EXPOSED")
+			}
+			return nil
+		}
+	}
+	for _, a := range st.Aggregates {
+		if (model == DefaultRouteID && st.DefaultModelID == a.ID) || model == AggregateRouteID(a.Name) {
+			if a.ExposureDisabled {
+				return appError("aggregate is not publicly exposed", 403, "AGGREGATE_NOT_EXPOSED")
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
 // aggregateChain resolves one open aggregate into its ordered member routes,
 // expanded for the configured number of retry rounds.
 func aggregateChain(st State, agg *Aggregate) ([]Route, error) {
@@ -468,23 +497,27 @@ func (s *Store) Catalog() map[string]any {
 }
 func catalogFor(st State) map[string]any {
 	models := []map[string]any{}
-	if hasEnabledDefault(st) {
+	if hasPublicDefault(st) {
 		models = append(models, catalogEntry(DefaultRouteID, defaultModelName(st), 0))
 	}
 	for _, m := range st.Models {
-		if m.Disabled {
+		if m.Disabled || m.ExposureDisabled {
 			continue
 		}
 		r := routeFor(st, m)
 		models = append(models, catalogEntry(r.RouteID, r.GroupName+" / "+r.ModelName, len(models)))
 	}
 	for _, agg := range st.Aggregates {
-		if agg.Disabled || len(aggregateMembers(st, &agg)) == 0 {
+		if agg.Disabled || agg.ExposureDisabled || len(aggregateMembers(st, &agg)) == 0 {
 			continue
 		}
 		models = append(models, catalogEntry(AggregateRouteID(agg.Name), "聚合 / "+agg.Name, len(models)))
 	}
 	return map[string]any{"models": models}
+}
+
+func hasPublicDefault(st State) bool {
+	return hasEnabledDefault(st) && publicExposureError(st, DefaultRouteID) == nil
 }
 
 func hasEnabledDefault(st State) bool {
@@ -520,15 +553,8 @@ func defaultModelName(st State) string {
 	}
 	return "跟随网页默认路由"
 }
-func reasoningLevels() []map[string]string {
-	out := []map[string]string{}
-	for _, e := range []string{"minimal", "low", "medium", "high", "xhigh", "max", "ultra"} {
-		out = append(out, map[string]string{"effort": e, "description": e})
-	}
-	return out
-}
 func catalogEntry(slug, name string, priority int) map[string]any {
-	return map[string]any{"slug": slug, "display_name": name, "priority": priority, "visibility": "list", "supported_in_api": true, "default_reasoning_level": "none", "supported_reasoning_levels": reasoningLevels(), "supports_reasoning_summary_parameter": false, "support_verbosity": false, "shell_type": "unified_exec", "truncation_policy": map[string]any{"mode": "tokens", "limit": 10000}, "experimental_supported_tools": []any{}, "input_modalities": []string{"text"}, "base_instructions": catalogInstructions}
+	return map[string]any{"slug": slug, "display_name": name, "priority": priority, "visibility": "list", "supported_in_api": true, "default_reasoning_level": defaultReasoningLevel, "supported_reasoning_levels": codexReasoningLevels(), "supports_reasoning_summary_parameter": false, "support_verbosity": false, "shell_type": "unified_exec", "truncation_policy": map[string]any{"mode": "tokens", "limit": 10000}, "experimental_supported_tools": []any{}, "input_modalities": []string{"text"}, "base_instructions": catalogInstructions}
 }
 
 // OpenAIModelList is the public GET /v1/models payload. The id itself is the
@@ -538,7 +564,7 @@ func (s *Store) OpenAIModelList() map[string]any {
 	out := []map[string]any{}
 	for _, group := range groupOrder(st) {
 		for _, m := range st.Models {
-			if m.GroupID != group.ID || m.Disabled {
+			if m.GroupID != group.ID || m.Disabled || m.ExposureDisabled {
 				continue
 			}
 			r := routeFor(st, m)
@@ -546,13 +572,13 @@ func (s *Store) OpenAIModelList() map[string]any {
 		}
 	}
 	for _, agg := range st.Aggregates {
-		if agg.Disabled || len(aggregateMembers(st, &agg)) == 0 {
+		if agg.Disabled || agg.ExposureDisabled || len(aggregateMembers(st, &agg)) == 0 {
 			continue
 		}
 		name := "聚合 / " + agg.Name
 		out = append(out, map[string]any{"id": AggregateRouteID(agg.Name), "name": name, "display_name": name, "object": "model", "owned_by": aggregateNamespace})
 	}
-	if hasEnabledDefault(st) {
+	if hasPublicDefault(st) {
 		out = append(out, map[string]any{"id": DefaultRouteID, "name": defaultModelName(st), "display_name": defaultModelName(st), "object": "model", "owned_by": "adroute"})
 	}
 	return map[string]any{"object": "list", "data": out}

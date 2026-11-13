@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { expect } from '@playwright/test';
-import { goBrowserFixture, goSavedModel } from './go-fixture.js';
+import { goBrowserFixture, goSavedModel, openRowActions } from './go-fixture.js';
 
 test('copy creates numbered independent models in the same group', { timeout: 60000 }, async t => {
   const f = await goBrowserFixture(t);
@@ -9,6 +9,7 @@ test('copy creates numbered independent models in the same group', { timeout: 60
   await f.login();
   const row = f.page.locator(`.model-row[data-model-id="${original.id}"]`);
   for (const name of ['coding-copy', 'coding-copy-2']) {
+    await openRowActions(row);
     await row.getByRole('button', { name: '复制', exact: true }).click();
     await expect(f.page.getByRole('heading', { name, exact: true })).toBeVisible();
   }
@@ -24,6 +25,7 @@ test('copy creates numbered independent models in the same group', { timeout: 60
     assert.notEqual(copy.id, original.id);
   }
   await f.page.setViewportSize({ width: 390, height: 844 });
+  await openRowActions(row);
   await expect(row.getByRole('button', { name: '复制', exact: true })).toBeVisible();
   assert.ok(await f.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
 });
@@ -46,7 +48,9 @@ test('copy reports an overlong name without creating an entry', { timeout: 60000
   const f = await goBrowserFixture(t);
   const original = await goSavedModel(f, { name: 'x'.repeat(100), disabled: true });
   await f.login();
-  await f.page.locator(`.model-row[data-model-id="${original.id}"]`).getByRole('button', { name: '复制', exact: true }).click();
+  const entry = f.page.locator(`.model-row[data-model-id="${original.id}"]`);
+  await openRowActions(entry);
+  await entry.getByRole('button', { name: '复制', exact: true }).click();
   await expect(f.page.locator('#global-error')).toContainText('超过 100 个字符');
   assert.equal((await f.state()).models.length, 1);
 });

@@ -38,12 +38,19 @@
 ```
 
 - `groups[].id` 与 `models[].id` 是稳定内部标识（UUID），永不作为对外模型 ID 暴露。
-- 组只保存身份与组名，不保存 URL 或凭据。
+- 组保存身份、组名与可选 `archived` 收纳标记，不保存 URL 或凭据。
+- 模型与聚合支持可选布尔 `favorite`、`archived`，缺省为 false；旧 version 6 配置无需迁移。收纳标记会保留于编辑、复制、重启和配置导入导出，但不参与目录发布筛选、对外权限、默认选择或内部路由。整组归档由管理界面继承显示，不修改子模型的 `archived`。
 - 每个模型必须属于且只属于一个组，并拥有自己的上游 Base URL、上游 API Key 与真实模型 ID。
 - `profile` 是逐条目的兼容修复绑定（`none` 或 `包ID@版本`），不继承组设置。
 - `aggregates[]` 是按顺序尝试的故障转移链；`members` 存模型条目 id，1~8 个且不重复，`maxRounds` 1~10（默认 5）。
-- `disabled: true` 表示已关闭；缺省表示开放。`defaultModelId` 可指向模型条目或聚合，为空表示没有网页默认。
+- `disabled: true` 表示已停用；`exposureDisabled: true` 表示仅关闭对外开放，二者缺省均为 false。对外关闭不影响内部测速或作为聚合成员使用。`defaultModelId` 可指向未停用的模型条目或聚合，为空表示没有网页默认。
 - 只接受 version 6。损坏或不支持的配置会报错并保留原文件，不会写回空配置或自动迁移。
+
+### 推理档位
+
+adroute 对外发布一份固定的推理档位表 `low / medium / high / xhigh / max`（`internal/adroute/reasoning.go` 的 `ReasoningLevels`）。Codex 模型目录把它写成 `supported_reasoning_levels`，OpenCode 同步把它写成每个模型的 `variants`；两个客户端形状不同、内容永远一致。默认档位为 `none`，即不发送 `reasoning.effort`。
+
+档位是默认菜单而非能力声明：adroute 不按上游校验，客户端发来的 `reasoning.effort` 原样透传。上游不接受某个档位时返回自己的错误，不换成员也不重试。
 
 ### 长度与数量上限
 
@@ -86,6 +93,10 @@ adroute/agg/<聚合名称>
 |---|---|---|
 | `GET /api/state` | — | 管理状态 |
 | `GET /api/setup` | — | 本地代理地址、代理密钥、Codex 配置预览 |
+| `GET /api/clients` | — | 支持客户端的接入状态：`id`、`name`、`enabled`、`available`、`stale`、`configPath`、`detail` |
+| `POST /api/clients/{codex,opencode}/enabled` | `{enabled: bool}` | 打开即接入、关闭即恢复/清空；返回最新客户端列表 |
+| `POST /api/clients/{codex,opencode}/refresh` | `{}` | 用当前模型目录重写该客户端的 AdRoute 部分 |
+| `POST /api/clients/refresh` | `{}` | 刷新所有已接入的客户端 |
 | `POST /api/catalog/retry` | 空体 | 重试发布 Codex 模型目录，不重新保存模型；失败 503 `CATALOG_PUBLICATION_FAILED` |
 | `POST /api/groups` | `{name}` | 新建组，201 |
 | `PUT /api/groups/:id` | `{name}` | 改组名 |
@@ -94,12 +105,17 @@ adroute/agg/<聚合名称>
 | `POST /api/models/:id/copy` | 空体 | 同组复制模型并自动编号，201；名称超过长度限制时返回 `MODEL_NAME_INVALID` |
 | `PUT /api/models/:id` | `{groupId,name,model,baseUrl,apiKey?,disabled?,profile?}` | 编辑模型 |
 | `DELETE /api/models/:id` | — | 删除模型；仍被聚合引用返回 409 `MODEL_IN_USE` |
-| `PUT /api/models/:id/availability` | `{enabled}` | 开放／关闭，严格布尔 |
+| `PUT /api/models/:id/availability` | `{enabled}` | 原有启用／停用，严格布尔；停用影响聚合成员并清空默认 |
+| `PUT /api/models/:id/exposure` | `{enabled}` | 对外开放／关闭，严格布尔；不影响内部可用性与默认选择 |
 | `POST /api/aggregates` | `{name,members,maxRounds?,disabled?}` | 新建聚合，201 |
 | `PUT /api/aggregates/:id` | `{name,members,maxRounds?,disabled?}` | 编辑聚合 |
 | `DELETE /api/aggregates/:id` | — | 删除聚合 |
-| `PUT /api/aggregates/:id/availability` | `{enabled}` | 开放／关闭，严格布尔 |
-| `POST /api/default` | `{modelId}`（显式 `null` 或空串清空） | 字段不可省略；可选开放模型或开放聚合 |
+| `PUT /api/aggregates/:id/availability` | `{enabled}` | 原有启用／停用，严格布尔 |
+| `PUT /api/aggregates/:id/exposure` | `{enabled}` | 对外开放／关闭，严格布尔；不改变成员状态 |
+| `PUT /api/groups/:id/organization` | `{archived}` | 仅收纳分组，不批量改写成员标记 |
+| `PUT /api/models/:id/organization` | `{favorite?,archived?}` | 至少一个严格布尔字段；未提供字段保持原值 |
+| `PUT /api/aggregates/:id/organization` | `{favorite?,archived?}` | 同上；不改变成员、开放状态或默认 |
+| `POST /api/default` | `{modelId}`（显式 `null` 或空串清空） | 字段不可省略；可选未停用模型或聚合 |
 | `POST /api/models/discover` | `{baseUrl,apiKey}` | 用未保存的地址与密钥获取模型列表，不保存 |
 | `POST /api/models/:id/discover` | `{baseUrl?,apiKey?}` | 同上；省略的字段使用该条目已保存值 |
 | `POST /api/models/:id/quick-test` | 空体 | 快速测速，见下节 |
@@ -110,9 +126,11 @@ adroute/agg/<聚合名称>
 | `POST /api/compatibility/replay` | `{ref,events}` | 本地回放 |
 | `POST /api/opencode/sync` | `{configPath?}` | 显式同步 OpenCode，见 [同步说明](opencode-sync.md) |
 
-`POST /api/models` 要求全部字段；`PUT /api/models/:id` 省略 `apiKey` 或传空串表示保留已保存的密钥，省略 `disabled` 表示保持当前开放状态（因此陈旧草稿不会重新开放已被关闭的条目）。
+模型和聚合的创建/编辑均接受可选严格布尔字段 `exposureDisabled`。`POST /api/models` 要求必要连接字段；`PUT /api/models/:id` 省略 `apiKey` 或传空串表示保留已保存的密钥，省略 `disabled`、`exposureDisabled` 分别保持当前停用、对外开放状态（因此陈旧草稿不会重新开放条目）。`/api/state` 返回这两个字段，`open` 为未停用且对外开放；`capabilities.modelExposure` 表示支持独立对外开放接口。
 
-复制模型使用服务端保存的最新连接、修复绑定与开放状态，不改变默认模型；每个副本独立保存凭据与配置，不复制页面内的测速结果。
+`capabilities.organization` 表示支持收纳接口。接口拒绝空对象、null、非布尔值和未知字段；分组不接受 `favorite`。收纳写入使用与模型编辑相同的原子持久化与 revision 边界。`/api/state` 在模型、聚合中返回显式 `favorite`、`archived`，在组中返回 `archived`；模型 `archived` 是自身标记，管理界面还需叠加所属组的标记。
+
+复制模型使用服务端保存的最新连接、修复绑定、开放及收纳状态，不改变默认模型；每个副本独立保存凭据与配置，不复制页面内的测速结果。
 
 管理请求顶层字段不接受 null，只有 `/api/default` 的 `modelId` 允许显式 null 作为清空命令。`apiKey:null` 不是“留空保留”，会被拒绝；非法请求不修改配置。名称按用户原输入校验，首尾空白也不裁剪后保存。
 
@@ -124,7 +142,7 @@ adroute/agg/<聚合名称>
 {
   "version": "0.1.0",
   "revision": 12,
-  "configVersion": 5,
+  "configVersion": 6,
   "url": "http://127.0.0.1:3001",
   "proxyUrl": "http://127.0.0.1:3001/v1",
   "groups": [{ "id": "...", "name": "work", "modelCount": 2, "openCount": 1 }],
@@ -165,6 +183,8 @@ adroute/agg/<聚合名称>
     "models": true,
     "aggregates": true,
     "modelAvailability": true,
+    "modelExposure": true,
+    "organization": true,
     "modelCopy": true,
     "quickTest": true,
     "quickTestTimeoutMs": 18000,
@@ -188,6 +208,7 @@ adroute/agg/<聚合名称>
 - `POST /v1/responses`（代理令牌）：`model` 字段缺失表示跟随 `adroute/default`；`null`、数字、空字符串返回 400 `INVALID_MODEL`；未知 ID 返回 404；已关闭 ID 返回 403 `MODEL_ROUTE_DISABLED`／`AGGREGATE_DISABLED`，且不会请求上游。
 - 请求到达时固定路由快照：已接收请求可以完成，后续请求立即使用新状态。
 - 关闭默认模型、删除模型或删除其组内唯一模型都会清空默认，不自动替换其他条目；重新开放不恢复默认。
+- 上述清空规则仅适用于旧的停用操作。页面圆灯调用独立 `/exposure` 接口：关闭后从外部模型列表、Codex 目录和 OpenCode 显式同步中隐藏；直接请求返回 403 `MODEL_NOT_EXPOSED`／`AGGREGATE_NOT_EXPOSED`，不请求上游。默认选择保留，但其目标未对外开放时，外部 `adroute/default` 也被隐藏和拒绝；重新开放即可恢复默认访问。聚合内部仍可使用对外关闭但未停用的成员。
 - 聚合按成员顺序依次尝试：连接失败、超时、429 与 5xx 换下一个成员；其余 4xx（确定性请求错误）立即透传，不换成员。成员全部轮完一轮后回到第一个成员重试，达到 `maxRounds` 轮后返回 `AGGREGATE_EXHAUSTED`（状态码取最后一次失败）。链头阶段总时长上限 13 分钟；一旦某个成员返回 2xx 响应头即提交，此后断流不重试。关闭的成员在请求时自动跳过；全部成员关闭返回 503 `AGGREGATE_EMPTY`。
 - 等待上游响应头的超时为 90 秒：推理档位较高的请求本来就慢，响应头迟迟不来不代表成员不可用。超时只影响“连上了但一直不响应”的成员，连接失败仍是毫秒级失败。
 - 成员在一次尝试中失败（连接失败、响应头超时、429 与 5xx）后进入 60 秒冷却：冷却期内它排在健康成员之后，但仍会被尝试，因此不会因为冷却返回 `AGGREGATE_EMPTY`。成员一旦成功即清除冷却，全部成员健康时仍严格按配置顺序，第一个成员保持优先。客户端取消（499）、提交后断流、以及 400 这类确定性请求错误都不计为成员不健康。

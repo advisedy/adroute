@@ -38,6 +38,9 @@ test('quick-test shows only speed; hover, keyboard and touch reveal measured det
   await page.setViewportSize({ width: 390, height: 844 });
   await info.click();
   await expect(tooltip).toBeVisible();
+  // Auto-scrolling the clicked anchor may deliver its scroll event one frame later.
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await expect(tooltip).toBeVisible();
   const bounds = await tooltip.boundingBox();
   assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 390, 'details must stay inside the phone viewport');
   await page.locator('#model-count').click();

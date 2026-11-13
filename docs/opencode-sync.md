@@ -1,25 +1,38 @@
 # OpenCode V2 模型目录同步
 
-同步由用户在网页明确触发且离线完成。Go 服务只在该操作调用同步；保存模型条目不会自动改 OpenCode。它不连接 OpenCode、不启动/重启服务、不发现模型、不展开变量，也不读取凭据文件。
+同步离线完成，由以下两个入口之一触发：管理页“客户端接入”里 OpenCode 那一行的开关与“刷新”按钮（走 `/api/clients/opencode/{enabled,refresh}`），或直接调用 `POST /api/opencode/sync`。两种入口都只在明确操作时写文件；保存模型条目不会自动改 OpenCode。它不连接 OpenCode、不启动/重启服务、不发现模型、不展开变量，也不读取凭据文件。
 
 管理页以管理员认证调用 `POST /api/opencode/sync`，默认请求 `{}`。非标准目标必须显式提供 `{ "configPath": "/absolute/path/to/opencode.jsonc" }`。接口使用当前不含凭据的模型目录快照，不接受调用方提交的模型列表，并执行常规 Host/Origin 和管理令牌校验。
 
+“客户端接入”的开关是页面上的主入口：打开即写入当前对外开放的模型，关闭即清空该模型映射并保留 provider、端点与凭据。刷新只用于修复已接入的客户端，对未接入的客户端返回 `409 CLIENT_NOT_ENABLED`，因此刷新不会绕过关闭状态。
+
 ## Go 模块与模型映射
 
-实现位于 `internal/adroute/jsonc.go`（字节范围解析）与 `internal/adroute/opencode_sync.go`。HTTP 调用由 `internal/adroute/http_management.go` 接入。契约测试位于 `internal/adroute/task3_test.go`；Go 二进制浏览器测试验证确认 UI、单飞与错误呈现。
+实现位于 `internal/adroute/jsonc.go`（字节范围解析）与 `internal/adroute/opencode_sync.go`。HTTP 调用由 `internal/adroute/http_management.go` 接入，客户端开关与状态在 `internal/adroute/clients.go`。契约测试位于 `internal/adroute/task3_test.go` 与 `internal/adroute/clients_test.go`；Go 二进制浏览器测试验证开关的单飞与错误呈现。
 
-同步只替换 `providers.adroute.models`：
+同步只替换 `providers.adroute.models`。每个条目包含 `name`、`modelID` 和固定的推理档位菜单：
 
 ```json
 {
   "adroute/pixel/daily-coder": {
     "name": "Daily Coder",
-    "modelID": "adroute/pixel/daily-coder"
+    "modelID": "adroute/pixel/daily-coder",
+    "variants": [
+      { "id": "low", "settings": { "reasoningEffort": "low" } },
+      { "id": "medium", "settings": { "reasoningEffort": "medium" } },
+      { "id": "high", "settings": { "reasoningEffort": "high" } },
+      { "id": "xhigh", "settings": { "reasoningEffort": "xhigh" } },
+      { "id": "max", "settings": { "reasoningEffort": "max" } }
+    ]
   }
 }
 ```
 
 模型来自 Store 当前目录快照。每个 `slug` 必须非空、唯一，且不含空白、控制字符或 `#`；`display_name` 必须是非空白字符串。`slug` 就是对外模型 ID `adroute/<组名>/<模型名称>`。允许重复展示名和空快照；空快照会清空该映射，已关闭模型不会写入。
+
+`variants` 是固定的五档菜单。OpenCode 把选中的档位作为 `reasoning.effort` 发给网关，adroute 原样转给上游。这些档位是**默认菜单，不是能力保证**：adroute 不知道每个上游模型实际接受哪些值，所以固定发布这五个通用档位。选到上游不认的档位会得到上游的错误，届时直接编辑该条目的 `variants` 即可。条目里已有的自定义档位会在下次同步时被这份菜单替换。
+
+这份档位表与 Codex 模型目录的 `supported_reasoning_levels` 是**同一份**（`internal/adroute/reasoning.go` 的 `ReasoningLevels`），两个客户端渲染成各自的形状但内容永远一致，不会出现某个档位只对一个客户端可见。默认档位保持 `none`（不发送 `reasoning.effort`），发布菜单不会自动提高成本或延迟。
 
 仅替换或添加 `providers.adroute.models`：
 
@@ -54,16 +67,18 @@ An unchanged call returns `backupPath: null` and does not replace the config or 
 
 Before syncing, the **target file itself** must contain an appropriately configured V2 `providers.adroute` object. The module does not merge configuration from other scopes or inspect accounts. Required:
 
-- Explicit `package`: `@opencode/ai/providers/openai/responses` or `@opencode/ai/providers/openai-compatible/responses`.
+- Explicit `package` naming a Responses runtime: `aisdk:@ai-sdk/openai`, `@opencode/ai/providers/openai`, `@opencode/ai/providers/openai/responses`, or `@opencode/ai/providers/openai-compatible/responses`. These are the packages whose requests reach the gateway as `POST /v1/responses`.
 - `settings.baseURL`: a complete HTTP(S) endpoint pointing at the gateway's `/v1`, or a whole `{env:NAME}` / `{file:path}` reference. URLs containing credentials, query strings, or fragments are refused. References are preserved without resolving or verifying them.
 - An existing nonblank `settings.apiKey`, nonempty `env` array of valid environment-variable names, or nonblank case-insensitive `Authorization` header. Actual credential availability/validity is not checked, and references are never expanded.
 - `models`, when present, must be an object.
 
-The gateway serves Responses, not Chat Completions. Chat-only runtimes, implicit/default runtimes, arbitrary custom packages, missing providers, and credentials stored solely in an uninspected account connection fail with guidance rather than being guessed or replaced. A structurally valid configuration is not proof that its endpoint or token works.
+The gateway serves Responses, not Chat Completions. Chat packages such as `aisdk:@ai-sdk/openai-compatible` and `@opencode/ai/providers/openai/chat` are refused rather than silently publishing models that would fail at request time. Chat-only runtimes, implicit/default runtimes, arbitrary custom packages, missing providers, and credentials stored solely in an uninspected account connection fail with guidance rather than being guessed or replaced. A structurally valid configuration is not proof that its endpoint or token works.
 
 ## Target file
 
-Without `configPath`, sync selects the single existing `opencode.json` **or** `opencode.jsonc` in `$HOME/.config/opencode`. `$XDG_CONFIG_HOME/opencode` is supported as an explicit configuration-directory convention. If both files exist, specify the absolute file path rather than guessing precedence. Relative paths and `.`/`..` path segments are refused so normalization cannot hide a symlink. Missing configuration files/directories are never created.
+Without `configPath`, sync selects the single existing `opencode.json` **or** `opencode.jsonc` in `$HOME/.config/opencode`. `$XDG_CONFIG_HOME/opencode` is supported as an explicit configuration-directory convention.
+
+When both default files exist, the module inspects them and writes the one that already declares `providers.adroute`. If both declare it, it writes `opencode.jsonc`, because OpenCode loads that file last and its value is the one actually applied. If neither declares the provider, or if the ownership cannot be read safely, it refuses with `OPENCODE_CONFIG_AMBIGUOUS` instead of creating a provider in an arbitrary file. Relative paths and `.`/`..` path segments are refused so normalization cannot hide a symlink. Missing configuration files/directories are never created.
 
 The V2 server-config guide documents `~/.config/opencode/opencode.json(c)`; the CLI-settings guide explicitly documents the XDG global directory convention for `cli.json`. For an installation whose server-config path differs, pass `configPath`; the module does not inspect a running server to infer its directory.
 
@@ -87,7 +102,7 @@ Errors are `AppError` instances with HTTP status `409`, sanitized messages, and 
 - `OPENCODE_MODELS_INVALID`: bad snapshot.
 - `OPENCODE_CONFIG_PATH`: invalid/unknown path or implicit override ambiguity.
 - `OPENCODE_CONFIG_MISSING`: no existing configuration.
-- `OPENCODE_CONFIG_AMBIGUOUS`: both default files exist.
+- `OPENCODE_CONFIG_AMBIGUOUS`: both default files exist and neither declares `providers.adroute`.
 - `OPENCODE_PROVIDER_INCOMPATIBLE`: provider needs manual V2 Responses setup.
 - `OPENCODE_CONFIG_INVALID`: unsupported/unsafe JSONC or size/depth/encoding limit.
 - `OPENCODE_CONFIG_UNSAFE`: unsafe file or path.

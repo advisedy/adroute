@@ -63,45 +63,36 @@
         <div id="state-unavailable" class="empty-panel" hidden><span class="empty-icon" aria-hidden="true">↻</span><h2>暂时无法读取服务状态</h2><p class="muted">请确认本地服务正在运行，然后重试。</p><button id="retry-state" class="button secondary" type="button">重新连接</button></div>
 
         <section id="models-panel" class="tab-panel" aria-label="模型管理" hidden>
-          <div class="toolbar">
-            <div id="group-filter" class="chips" role="group" aria-label="按模型组筛选"></div>
-            <div class="toolbar-actions">
-              <button id="add-model" class="button primary" type="button"><span aria-hidden="true">＋</span> 添加模型</button>
-              <button id="manage-groups" class="button secondary" type="button">管理组</button>
-              <button id="import-config" class="button secondary" type="button">导入配置</button>
-              <button id="export-config" class="button secondary" type="button" title="导出文件包含明文上游 API Key，请妥善保管">导出配置</button>
-              <input id="import-config-file" type="file" accept=".json,application/json" hidden>
-            </div>
+          <div class="workbench-heading"><h2>模型 <span id="model-count" class="count-badge">0</span></h2><div class="toolbar-actions">
+            <details class="action-menu"><summary>管理与备份</summary><div class="action-menu-items">
+              <button id="manage-groups" class="button subtle small-button" type="button">管理组</button>
+              <button id="import-config" class="button subtle small-button" type="button">导入配置</button>
+              <button id="export-config" class="button subtle small-button" type="button" title="导出文件包含明文上游 API Key，请妥善保管">导出配置</button>
+            </div></details>
+            <button id="add-model" class="button primary" type="button"><span aria-hidden="true">＋</span> 添加模型</button>
+            <input id="import-config-file" type="file" accept=".json,application/json" hidden>
+          </div></div>
+          <div class="collection-tabs" role="group" aria-label="模型收纳视图">
+            <button type="button" data-collection="favorites" data-kind="models">常用</button><button type="button" data-collection="all" data-kind="models">全部</button><button type="button" data-collection="archived" data-kind="models">已归档</button>
           </div>
-          <p class="field-help">导出文件包含明文上游 API Key，请妥善保管；导入会覆盖当前模型配置。</p>
-
-          <div class="section-heading"><div><h2>模型 <span id="model-count" class="count-badge">0</span></h2><p class="muted">按模型组展示；关闭模型不会删除其配置。点击测速会立即发送一次真实请求，可能产生少量费用或消耗额度。</p></div></div>
-          <div id="model-list" class="model-list"></div>
-
+          <div class="workbench-search">
+            <label class="sr-only" for="model-search">搜索模型</label><input id="model-search" type="search" placeholder="搜索名称、模型 ID 或分组" autocomplete="off">
+            <div id="group-filter"></div>
+            <label class="sr-only" for="model-exposure-filter">对外权限</label><select id="model-exposure-filter"><option value="all">全部权限</option><option value="open">对外开放</option><option value="closed">对外关闭 / 停用</option></select>
+            <label class="checkbox-label archive-search"><input id="model-include-archived" type="checkbox"><span>包含归档</span></label>
+          </div>
+          <p class="field-help workbench-hint">收藏跨分组显示；归档仅收起列表，不改变权限、默认选择或聚合成员。</p>
           <div class="default-bar panel">
             <div class="default-field">
-              <label for="default-model">网页默认模型</label>
+              <label for="default-model">默认路由</label>
               <select id="default-model"></select>
             </div>
-            <p class="field-help">可选。客户端仍可显式选择任意开放模型；<code>adroute/default</code> 只在默认模型开放时出现在目录里。</p>
+            <p class="field-help"><code>adroute/default</code> 跟随此选择；不改变对外权限。</p>
             <p id="default-status" class="field-help" role="status" hidden></p>
           </div>
 
-          <section class="access-panel panel" aria-labelledby="access-heading">
-            <div class="access-head"><div><h2 id="access-heading">本地接入</h2><p class="muted">统一地址与代理密钥；上游地址和上游 API Key 属于每个模型自己。</p></div><span class="badge">Responses</span></div>
-            <div class="access-grid">
-              <div class="access-field">
-                <label for="client-base-url">本地 Base URL</label>
-                <div class="access-row"><input id="client-base-url" type="text" readonly autocomplete="off" spellcheck="false"><button id="copy-client-base-url" class="button subtle small-button" type="button">复制</button></div>
-              </div>
-              <div class="access-field">
-                <label for="client-api-key">本地代理密钥</label>
-                <div class="access-row"><input id="client-api-key" type="password" readonly autocomplete="off" spellcheck="false"><button id="toggle-client-api-key" class="button subtle small-button" type="button" aria-pressed="false">显示</button><button id="copy-client-api-key" class="button subtle small-button" type="button">复制</button></div>
-                <p class="field-help">这是本地代理密钥，不是模型的上游 API Key，也不是管理令牌。</p>
-              </div>
-            </div>
-            <p class="field-help">本地入口当前只提供 POST /v1/responses 与 GET /v1/models，不转换 Chat Completions 或 Anthropic 协议。</p>
-          </section>
+          <div id="model-list" class="model-list"></div>
+          <p class="field-help">圆灯表示对外权限，不代表健康。点击测速会发送真实请求，可能产生少量费用。</p>
         </section>
 
         <section id="aggregates-panel" class="tab-panel" aria-labelledby="aggregates-heading" hidden>
@@ -110,7 +101,10 @@
               <button id="add-aggregate" class="button primary" type="button"><span aria-hidden="true">＋</span> 新建聚合</button>
             </div>
           </div>
-          <div class="section-heading"><div><h2 id="aggregates-heading">聚合 <span id="aggregate-count" class="count-badge">0</span></h2><p class="muted">聚合是一串按顺序尝试的模型；某个成员连不上、超时或返回 429/5xx 时会自动换下一个，全部轮完才报错。刚失败的成员会在 60 秒内排到后面，健康时仍优先第一个成员。客户端对聚合和模型用法完全相同，通过 <code>adroute/agg/&lt;名称&gt;</code> 调用。</p></div></div>
+          <div class="section-heading"><div><h2 id="aggregates-heading">聚合 <span id="aggregate-count" class="count-badge">0</span></h2><p class="muted">按顺序故障转移；收藏、归档不影响成员路由。</p></div></div>
+          <div class="collection-tabs" role="group" aria-label="聚合收纳视图"><button type="button" data-collection="favorites" data-kind="aggregates">常用</button><button type="button" data-collection="all" data-kind="aggregates">全部</button><button type="button" data-collection="archived" data-kind="aggregates">已归档</button></div>
+          <div class="workbench-search"><label class="sr-only" for="aggregate-search">搜索聚合</label><input id="aggregate-search" type="search" placeholder="搜索聚合名称、模型 ID 或成员分组" autocomplete="off"><label class="sr-only" for="aggregate-exposure-filter">聚合对外权限</label><select id="aggregate-exposure-filter"><option value="all">全部权限</option><option value="open">对外开放</option><option value="closed">对外关闭 / 停用</option></select><label class="checkbox-label archive-search"><input id="aggregate-include-archived" type="checkbox"><span>包含归档</span></label></div>
+          <p class="field-help workbench-hint">归档仅收起列表，当前对外开放状态保持不变。</p>
           <div id="aggregate-list" class="aggregate-list"></div>
         </section>
 
@@ -120,15 +114,32 @@
         </section>
 
         <section id="setup-panel" class="tab-panel" aria-labelledby="setup-heading" hidden>
-          <div class="setup-intro panel"><div class="setup-step-number" aria-hidden="true">↗</div><div><h2 id="setup-heading">客户端接入与恢复</h2><p class="muted">运行 <code>adroute start</code> 会备份并合并 Codex 配置，再运行 <code>codex</code>。目录与模型选择来自上面保存的模型。</p></div></div>
-          <div id="setup-loading" class="loading-panel" role="status" hidden><span class="spinner"></span><span>正在获取本地接入配置…</span></div>
+          <div class="setup-intro panel"><div class="setup-step-number" aria-hidden="true">↗</div><div><h2 id="setup-heading">客户端接入</h2><p class="muted">打开开关即接入 AdRoute，关闭即恢复原配置。只支持下面列出的客户端，其他客户端请手动填写本地地址与密钥。</p></div></div>
+          <div id="setup-loading" class="loading-panel" role="status" hidden><span class="spinner"></span><span>正在读取客户端配置…</span></div>
           <div id="setup-error" class="notice error-notice" role="alert" hidden></div>
           <button id="setup-retry" class="button secondary" type="button" hidden>重新获取配置</button>
           <div id="setup-content" hidden>
-            <div class="setup-endpoint panel"><div><span class="tiny-label">本地代理地址</span><code id="setup-url"></code></div><button id="copy-proxy-url" class="button subtle small-button" type="button">复制地址</button></div>
-            <article class="setup-card panel"><div class="setup-card-heading"><div class="step-title"><span class="step-number">01</span><div><h3>启动并自动配置</h3><p class="muted"><code>adroute start</code> 会备份并合并 Codex 配置，沿用已有 <code>CODEX_HOME</code>；自动设置 <code>model = "adroute/default"</code> 和根级 <code>model_catalog_json</code>。目录位于 <code>ADROUTE_HOME/codex/models.json</code>。下方为自动配置预览。</p></div></div><button id="copy-config" class="button subtle small-button" type="button">复制配置</button></div><pre tabindex="0" aria-label="Codex 配置预览"><code id="codex-config"></code></pre></article>
-            <article class="setup-card panel"><div class="step-title"><span class="step-number">02</span><div><h3>在客户端选择模型</h3><p class="muted">客户端目录里的模型 ID 就是 <code>adroute/&lt;组名&gt;/&lt;模型名称&gt;</code>，显示名称为“组名 / 模型名称”；实际发给上游的是每个模型自己保存的真实模型 ID。关闭的模型不会进入目录，缓存了旧 ID 的客户端也会被拒绝。</p></div></div><button id="setup-back" class="button secondary" type="button">返回模型管理 <span aria-hidden="true">→</span></button></article>
-            <article class="setup-card panel"><div class="setup-card-heading"><div class="step-title"><span class="step-number">03</span><div><h3>OpenCode 显式同步</h3><p class="muted">只有你点击确认后，才会把当前开放的模型写入已有的 OpenCode AdRoute 配置；保存模型或切换开放状态不会自动写外部文件。</p></div></div><button id="opencode-sync" class="button secondary" type="button">同步到 OpenCode</button></div><p id="opencode-sync-status" class="field-help" role="status" hidden></p><p class="muted"><code>adroute stop</code> 会恢复仍由 AdRoute 管理的 Codex 设置并保留你的修改；也可运行 <code>adroute codex restore</code>。兼容 Codex CLI 0.156.0。</p></article>
+            <div class="client-list" id="client-list" aria-live="polite"></div>
+            <div class="client-toolbar">
+              <button id="clients-refresh-all" class="button secondary" type="button">刷新全部接入</button>
+              <span id="clients-refresh-status" class="field-help" role="status" hidden></span>
+            </div>
+
+            <section class="access-panel panel" aria-labelledby="access-heading">
+              <div class="access-head"><div><h3 id="access-heading">手动接入与其他客户端</h3><p class="muted">统一地址与代理密钥；上游凭据属于各模型。</p></div><span class="badge">Responses</span></div>
+              <div class="access-grid">
+                <div class="access-field"><label for="client-base-url">本地 Base URL</label><div class="access-row"><input id="client-base-url" type="text" readonly autocomplete="off" spellcheck="false"><button id="copy-client-base-url" class="button subtle small-button" type="button">复制</button></div></div>
+                <div class="access-field"><label for="client-api-key">本地代理密钥</label><div class="access-row"><input id="client-api-key" type="password" readonly autocomplete="off" spellcheck="false"><button id="toggle-client-api-key" class="button subtle small-button" type="button" aria-pressed="false">显示</button><button id="copy-client-api-key" class="button subtle small-button" type="button">复制</button></div><p class="field-help">这是本地代理密钥，不是上游 API Key 或管理令牌。</p></div>
+              </div>
+              <p class="field-help">提供 POST /v1/responses 与 GET /v1/models，不转换 Chat Completions 或 Anthropic 协议。</p>
+              <div class="setup-endpoint"><div><span class="tiny-label">本地代理地址</span><code id="setup-url"></code></div><button id="copy-proxy-url" class="button subtle small-button" type="button">复制地址</button></div>
+            </section>
+            <details class="setup-details panel">
+              <summary>Codex 配置预览</summary>
+              <div class="setup-card-heading"><p class="muted">开关打开时自动备份并合并以下设置；关闭时恢复仍由 AdRoute 管理的字段并保留你的修改。</p><button id="copy-config" class="button subtle small-button" type="button">复制配置</button></div>
+              <pre tabindex="0" aria-label="Codex 配置预览"><code id="codex-config"></code></pre>
+            </details>
+            <p class="muted setup-foot">客户端目录里的模型 ID 是 <code>adroute/&lt;组名&gt;/&lt;模型名称&gt;</code>。关闭的模型不会进入目录，缓存了旧 ID 的客户端也会被拒绝。兼容 code CLI 0.156.0。</p>
           </div>
         </section>
 

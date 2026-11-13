@@ -179,7 +179,8 @@ func (s *Store) CreateModel(in ModelInput) (string, error) {
 		if in.Disabled != nil {
 			disabled = *in.Disabled
 		}
-		st.Models = append(st.Models, Model{ID: id, GroupID: in.GroupID, Name: in.Name, Model: in.Model, BaseURL: base, APIKey: key, Website: website, Disabled: disabled, Profile: profile})
+		exposureDisabled := in.ExposureDisabled != nil && *in.ExposureDisabled
+		st.Models = append(st.Models, Model{ID: id, GroupID: in.GroupID, Name: in.Name, Model: in.Model, BaseURL: base, APIKey: key, Website: website, Disabled: disabled, ExposureDisabled: exposureDisabled, Profile: profile})
 		return nil
 	})
 	return id, err
@@ -232,6 +233,9 @@ func (s *Store) UpdateModel(id string, in ModelInput) error {
 		if in.Disabled != nil {
 			next.Disabled = *in.Disabled
 		}
+		if in.ExposureDisabled != nil {
+			next.ExposureDisabled = *in.ExposureDisabled
+		}
 		if profile != "" {
 			if profile != "none" && !adapterInstalled(st, profile) {
 				return appError("修复包版本不存在。", 400, "ADAPTER_NOT_FOUND")
@@ -260,6 +264,19 @@ func (s *Store) DeleteModel(id string) error {
 		if st.DefaultModelID == id {
 			st.DefaultModelID = ""
 		}
+		return nil
+	})
+}
+
+// SetModelExposure changes only public access; internal use and the selected
+// default are retained. Public default resolution enforces exposure separately.
+func (s *Store) SetModelExposure(id string, enabled bool) error {
+	return s.mutate(func(st *State) error {
+		index := modelIndex(st, id)
+		if index < 0 {
+			return appError("模型条目不存在。", 404, "MODEL_NOT_FOUND")
+		}
+		st.Models[index].ExposureDisabled = !enabled
 		return nil
 	})
 }
@@ -395,7 +412,8 @@ func (s *Store) CreateAggregate(in AggregateInput) (string, error) {
 			disabled = *in.Disabled
 		}
 		members := append([]string(nil), in.Members...)
-		st.Aggregates = append(st.Aggregates, Aggregate{ID: id, Name: in.Name, Members: members, MaxRounds: rounds, Disabled: disabled})
+		exposureDisabled := in.ExposureDisabled != nil && *in.ExposureDisabled
+		st.Aggregates = append(st.Aggregates, Aggregate{ID: id, Name: in.Name, Members: members, MaxRounds: rounds, Disabled: disabled, ExposureDisabled: exposureDisabled})
 		return nil
 	})
 	return id, err
@@ -421,6 +439,9 @@ func (s *Store) UpdateAggregate(id string, in AggregateInput) error {
 		if in.Disabled != nil {
 			current.Disabled = *in.Disabled
 		}
+		if in.ExposureDisabled != nil {
+			current.ExposureDisabled = *in.ExposureDisabled
+		}
 		st.Aggregates[index] = current
 		if current.Disabled && st.DefaultModelID == id {
 			st.DefaultModelID = ""
@@ -439,6 +460,17 @@ func (s *Store) DeleteAggregate(id string) error {
 		if st.DefaultModelID == id {
 			st.DefaultModelID = ""
 		}
+		return nil
+	})
+}
+
+func (s *Store) SetAggregateExposure(id string, enabled bool) error {
+	return s.mutate(func(st *State) error {
+		index := aggregateIndex(st, id)
+		if index < 0 {
+			return appError("聚合不存在。", 404, "AGGREGATE_NOT_FOUND")
+		}
+		st.Aggregates[index].ExposureDisabled = !enabled
 		return nil
 	})
 }

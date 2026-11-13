@@ -1,6 +1,6 @@
 import test from 'node:test';
 import { expect } from '@playwright/test';
-import { goBrowserFixture, goSavedGroup, goSavedModel } from './go-fixture.js';
+import { goBrowserFixture, goSavedGroup, goSavedModel, openRowActions } from './go-fixture.js';
 
 test('home shows each group with its own models and keeps row actions on mobile', { timeout: 60000 }, async t => {
   const f = await goBrowserFixture(t);
@@ -23,7 +23,9 @@ test('home shows each group with its own models and keeps row actions on mobile'
 
   await f.page.setViewportSize({ width: 390, height: 844 });
   const row = work.locator('.model-row').filter({ hasText: 'alpha' });
-  for (const name of ['测速', '编辑', '删除']) await expect(row.getByRole('button', { name, exact: true })).toBeVisible();
+  for (const name of ['测速', '编辑']) await expect(row.getByRole('button', { name, exact: true })).toBeVisible();
+  await openRowActions(row);
+  await expect(row.getByRole('button', { name: '删除', exact: true })).toBeVisible();
   await expect(row.getByRole('checkbox')).toBeVisible();
   expect(await f.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });

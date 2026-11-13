@@ -263,6 +263,7 @@ test('group rename drafts survive ordinary refresh and an old dialog rename resp
   await goSavedModel(f, { group: 'beta' });
   await f.login();
   const input = name => page.getByRole('textbox', { name: `组名 ${name}`, exact: true });
+  await page.locator('#models-panel > .workbench-heading summary').click();
   await page.locator('#manage-groups').click();
   await input('beta').fill('beta-draft');
   await refresh(page);
@@ -275,6 +276,7 @@ test('group rename drafts survive ordinary refresh and an old dialog rename resp
   page.once('dialog', dialog => dialog.accept());
   await input('alpha').locator('..').getByRole('button', { name: '改名', exact: true }).click(); await seen.promise;
   await page.locator('#groups-dialog [data-close-dialog]').first().click();
+  await page.locator('#models-panel > .workbench-heading summary').click();
   await page.locator('#manage-groups').click();
   await input('beta').fill('beta-new-draft');
   gate.resolve();

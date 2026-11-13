@@ -30,6 +30,9 @@ type HTTPOptions struct {
 	PromptTemplate             []byte
 	Shutdown                   func()
 	Log                        func(map[string]any)
+	// Env is the environment used to locate client configuration. It defaults
+	// to the process environment; tests may inject an isolated one.
+	Env map[string]string
 }
 type HTTPApp struct {
 	opts        HTTPOptions
@@ -38,6 +41,7 @@ type HTTPApp struct {
 	cooldowns   *cooldownTable
 	requestMu   sync.Mutex
 	requests    []map[string]any
+	clientMu    sync.Mutex
 }
 
 func NewHTTPApp(o HTTPOptions) (*HTTPApp, error) {
@@ -62,6 +66,9 @@ func NewHTTPApp(o HTTPOptions) (*HTTPApp, error) {
 	}
 	if o.Store != nil && o.PromptRoot == "" {
 		o.PromptRoot = "."
+	}
+	if o.Env == nil {
+		o.Env = processEnv()
 	}
 	a := &HTTPApp{opts: o, cooldowns: newCooldownTable(failoverCooldown, nil), requests: []map[string]any{}}
 	if o.Store != nil {

@@ -67,8 +67,9 @@ func (s *State) UnmarshalJSON(data []byte) error {
 // Group is a user-created classification. It owns no URL, credential, or
 // upstream identity.
 type Group struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Archived bool   `json:"archived,omitempty"`
 }
 
 func (v *Group) UnmarshalJSON(b []byte) error {
@@ -78,20 +79,23 @@ func (v *Group) UnmarshalJSON(b []byte) error {
 		return e
 	}
 	*v = Group(x)
-	return nil
+	return validateOrganizationJSON(b)
 }
 
 // Model is a single routable entry with its own upstream connection settings.
 type Model struct {
-	ID       string `json:"id"`
-	GroupID  string `json:"groupId"`
-	Name     string `json:"name"`
-	Model    string `json:"model"`
-	BaseURL  string `json:"baseUrl"`
-	APIKey   string `json:"apiKey"`
-	Website  string `json:"website,omitempty"`
-	Disabled bool   `json:"disabled,omitempty"`
-	Profile  string `json:"profile"`
+	ID               string `json:"id"`
+	GroupID          string `json:"groupId"`
+	Name             string `json:"name"`
+	Model            string `json:"model"`
+	BaseURL          string `json:"baseUrl"`
+	APIKey           string `json:"apiKey"`
+	Website          string `json:"website,omitempty"`
+	Disabled         bool   `json:"disabled,omitempty"`
+	ExposureDisabled bool   `json:"exposureDisabled,omitempty"`
+	Favorite         bool   `json:"favorite,omitempty"`
+	Archived         bool   `json:"archived,omitempty"`
+	Profile          string `json:"profile"`
 }
 
 func (v *Model) UnmarshalJSON(b []byte) error {
@@ -118,10 +122,13 @@ func (v *Model) UnmarshalJSON(b []byte) error {
 	if raw, ok := fields["baseUrl"]; ok && string(raw) == "null" {
 		return fmt.Errorf("baseUrl must be a string")
 	}
+	if raw, ok := fields["exposureDisabled"]; ok && string(raw) == "null" {
+		return fmt.Errorf("exposureDisabled must be a boolean")
+	}
 	if raw, ok := fields["apiKey"]; ok && string(raw) == "null" {
 		return fmt.Errorf("apiKey must be a string")
 	}
-	return nil
+	return validateOrganizationJSON(b)
 }
 
 // GroupInput is the create/rename payload for a model group.
@@ -144,14 +151,15 @@ func (v *GroupInput) UnmarshalJSON(b []byte) error {
 // apiKey is omitted or blank, and keeps the stored open/closed status when
 // disabled is omitted.
 type ModelInput struct {
-	GroupID  string `json:"groupId"`
-	Name     string `json:"name"`
-	Model    string `json:"model"`
-	BaseURL  string `json:"baseUrl"`
-	APIKey   string `json:"apiKey,omitempty"`
-	Website  string `json:"website,omitempty"`
-	Profile  string `json:"profile,omitempty"`
-	Disabled *bool  `json:"disabled,omitempty"`
+	GroupID          string `json:"groupId"`
+	Name             string `json:"name"`
+	Model            string `json:"model"`
+	BaseURL          string `json:"baseUrl"`
+	APIKey           string `json:"apiKey,omitempty"`
+	Website          string `json:"website,omitempty"`
+	Profile          string `json:"profile,omitempty"`
+	Disabled         *bool  `json:"disabled,omitempty"`
+	ExposureDisabled *bool  `json:"exposureDisabled,omitempty"`
 
 	apiKeyProvided bool `json:"-"`
 }
@@ -184,6 +192,9 @@ func (v *ModelInput) UnmarshalJSON(b []byte) error {
 	if raw, ok := fields["apiKey"]; ok && string(raw) != "null" {
 		x.apiKeyProvided = true
 	}
+	if raw, ok := fields["exposureDisabled"]; ok && string(raw) == "null" {
+		return fmt.Errorf("exposureDisabled must be a boolean")
+	}
 	*v = ModelInput(x)
 	return nil
 }
@@ -208,11 +219,14 @@ func (v *DiscoverInput) UnmarshalJSON(b []byte) error {
 // Aggregate is an ordered failover chain over saved model entries. Members are
 // stable model entry ids, so renames upstream never break the chain.
 type Aggregate struct {
-	ID        string   `json:"id"`
-	Name      string   `json:"name"`
-	Members   []string `json:"members"`
-	MaxRounds int      `json:"maxRounds"`
-	Disabled  bool     `json:"disabled,omitempty"`
+	ID               string   `json:"id"`
+	Name             string   `json:"name"`
+	Members          []string `json:"members"`
+	MaxRounds        int      `json:"maxRounds"`
+	Disabled         bool     `json:"disabled,omitempty"`
+	ExposureDisabled bool     `json:"exposureDisabled,omitempty"`
+	Favorite         bool     `json:"favorite,omitempty"`
+	Archived         bool     `json:"archived,omitempty"`
 }
 
 func (v *Aggregate) UnmarshalJSON(b []byte) error {
@@ -225,23 +239,24 @@ func (v *Aggregate) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(b, &fields); err != nil {
 		return err
 	}
-	for _, field := range []string{"id", "name", "members", "maxRounds", "disabled"} {
+	for _, field := range []string{"id", "name", "members", "maxRounds", "disabled", "exposureDisabled"} {
 		if raw, ok := fields[field]; ok && string(raw) == "null" {
 			return fmt.Errorf("%s must not be null", field)
 		}
 	}
 	*v = Aggregate(x)
-	return nil
+	return validateOrganizationJSON(b)
 }
 
 // AggregateInput is the create/update payload for one failover chain. Create
 // requires name and members; update keeps the stored open/closed status when
 // disabled is omitted.
 type AggregateInput struct {
-	Name      string   `json:"name"`
-	Members   []string `json:"members"`
-	MaxRounds int      `json:"maxRounds,omitempty"`
-	Disabled  *bool    `json:"disabled,omitempty"`
+	Name             string   `json:"name"`
+	Members          []string `json:"members"`
+	MaxRounds        int      `json:"maxRounds,omitempty"`
+	Disabled         *bool    `json:"disabled,omitempty"`
+	ExposureDisabled *bool    `json:"exposureDisabled,omitempty"`
 }
 
 func (v *AggregateInput) UnmarshalJSON(b []byte) error {
@@ -270,6 +285,9 @@ func (v *AggregateInput) UnmarshalJSON(b []byte) error {
 		x.Disabled = &disabled
 	}
 	*v = AggregateInput(x)
+	if raw, ok := fields["exposureDisabled"]; ok && string(raw) == "null" {
+		return fmt.Errorf("exposureDisabled must be a boolean")
+	}
 	return nil
 }
 
