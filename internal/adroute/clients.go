@@ -255,7 +255,8 @@ func (a *HTTPApp) catalogModels() []SyncModel {
 		for _, entry := range entries {
 			slug, _ := entry["slug"].(string)
 			name, _ := entry["display_name"].(string)
-			models = append(models, SyncModel{Slug: slug, DisplayName: name})
+			window, _ := entry["context_window"].(int)
+			models = append(models, SyncModel{Slug: slug, DisplayName: name, ContextWindow: window})
 		}
 	}
 	return models

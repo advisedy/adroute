@@ -23,6 +23,9 @@ const openCodeLimit = 2 << 20
 type SyncModel struct {
 	Slug        string `json:"slug"`
 	DisplayName string `json:"display_name"`
+	// ContextWindow is published as limit.context when positive. Zero omits
+	// the limit entirely so OpenCode keeps its own fallback.
+	ContextWindow int `json:"context_window,omitempty"`
 }
 type OpenCodeSyncOptions struct {
 	Models     []SyncModel
@@ -278,7 +281,11 @@ func modelSnapshot(models []SyncModel) (map[string]any, int, error) {
 		if _, ok := out[m.Slug]; ok {
 			return nil, 0, appError("models snapshot is invalid", 409, "OPENCODE_MODELS_INVALID")
 		}
-		out[m.Slug] = map[string]any{"name": m.DisplayName, "modelID": m.Slug, "variants": openCodeReasoningVariants()}
+		entry := map[string]any{"name": m.DisplayName, "modelID": m.Slug, "variants": openCodeReasoningVariants()}
+		if m.ContextWindow > 0 {
+			entry["limit"] = map[string]any{"context": m.ContextWindow}
+		}
+		out[m.Slug] = entry
 	}
 	b, _ := json.Marshal(out)
 	if len(b) > openCodeLimit {

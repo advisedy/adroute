@@ -498,22 +498,55 @@ func (s *Store) Catalog() map[string]any {
 func catalogFor(st State) map[string]any {
 	models := []map[string]any{}
 	if hasPublicDefault(st) {
-		models = append(models, catalogEntry(DefaultRouteID, defaultModelName(st), 0))
+		models = append(models, catalogEntry(DefaultRouteID, defaultModelName(st), 0, defaultContextWindow(st)))
 	}
 	for _, m := range st.Models {
 		if m.Disabled || m.ExposureDisabled {
 			continue
 		}
 		r := routeFor(st, m)
-		models = append(models, catalogEntry(r.RouteID, r.GroupName+" / "+r.ModelName, len(models)))
+		models = append(models, catalogEntry(r.RouteID, r.GroupName+" / "+r.ModelName, len(models), m.ContextWindow))
 	}
 	for _, agg := range st.Aggregates {
 		if agg.Disabled || agg.ExposureDisabled || len(aggregateMembers(st, &agg)) == 0 {
 			continue
 		}
-		models = append(models, catalogEntry(AggregateRouteID(agg.Name), "聚合 / "+agg.Name, len(models)))
+		models = append(models, catalogEntry(AggregateRouteID(agg.Name), "聚合 / "+agg.Name, len(models), aggregateContextWindow(st, &agg)))
 	}
 	return map[string]any{"models": models}
+}
+
+// defaultContextWindow is the window of whatever adroute/default resolves to.
+func defaultContextWindow(st State) int {
+	for _, m := range st.Models {
+		if m.ID == st.DefaultModelID {
+			return m.ContextWindow
+		}
+	}
+	for _, a := range st.Aggregates {
+		if a.ID == st.DefaultModelID {
+			return aggregateContextWindow(st, &a)
+		}
+	}
+	return 0
+}
+
+// aggregateContextWindow publishes the smallest window among members, and only
+// when every member declares one. A failover chain tries members in order, so
+// the largest value would promise a capacity the weakest member cannot honor;
+// an undeclared member would make any total a guess.
+func aggregateContextWindow(st State, agg *Aggregate) int {
+	smallest := 0
+	for _, id := range agg.Members {
+		index := modelIndex(&st, id)
+		if index < 0 || st.Models[index].ContextWindow == 0 {
+			return 0
+		}
+		if window := st.Models[index].ContextWindow; smallest == 0 || window < smallest {
+			smallest = window
+		}
+	}
+	return smallest
 }
 
 func hasPublicDefault(st State) bool {
@@ -553,8 +586,17 @@ func defaultModelName(st State) string {
 	}
 	return "跟随网页默认路由"
 }
-func catalogEntry(slug, name string, priority int) map[string]any {
-	return map[string]any{"slug": slug, "display_name": name, "priority": priority, "visibility": "list", "supported_in_api": true, "default_reasoning_level": defaultReasoningLevel, "supported_reasoning_levels": codexReasoningLevels(), "supports_reasoning_summary_parameter": false, "support_verbosity": false, "shell_type": "unified_exec", "truncation_policy": map[string]any{"mode": "tokens", "limit": 10000}, "experimental_supported_tools": []any{}, "input_modalities": []string{"text"}, "base_instructions": catalogInstructions}
+
+// catalogEntry renders one model for the Codex catalog. contextWindow is
+// omitted when zero so Codex keeps its own fallback rather than trusting a
+// number adroute does not know. max_context_window is deliberately not sent:
+// Codex derives it from context_window.
+func catalogEntry(slug, name string, priority int, contextWindow int) map[string]any {
+	entry := map[string]any{"slug": slug, "display_name": name, "priority": priority, "visibility": "list", "supported_in_api": true, "default_reasoning_level": defaultReasoningLevel, "supported_reasoning_levels": codexReasoningLevels(), "supports_reasoning_summary_parameter": false, "support_verbosity": false, "shell_type": "unified_exec", "truncation_policy": map[string]any{"mode": "tokens", "limit": 10000}, "experimental_supported_tools": []any{}, "input_modalities": []string{"text"}, "base_instructions": catalogInstructions}
+	if contextWindow > 0 {
+		entry["context_window"] = contextWindow
+	}
+	return entry
 }
 
 // OpenAIModelList is the public GET /v1/models payload. The id itself is the

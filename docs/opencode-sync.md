@@ -30,6 +30,8 @@
 
 模型来自 Store 当前目录快照。每个 `slug` 必须非空、唯一，且不含空白、控制字符或 `#`；`display_name` 必须是非空白字符串。`slug` 就是对外模型 ID `adroute/<组名>/<模型名称>`。允许重复展示名和空快照；空快照会清空该映射，已关闭模型不会写入。
 
+每个模型可带可选的 `context_window`（token），只有大于 0 时才写成该条目的 `limit.context`；为 0 或缺失时整个 `limit` 都不写，让 OpenCode 用它自己的兜底值。adroute 不发布 `limit.output`，输出预算是 OpenCode 自己的设置。这个值只是客户端提示，adroute 不会据此裁剪历史或拒绝请求。
+
 `variants` 是固定的五档菜单。OpenCode 把选中的档位作为 `reasoning.effort` 发给网关，adroute 原样转给上游。这些档位是**默认菜单，不是能力保证**：adroute 不知道每个上游模型实际接受哪些值，所以固定发布这五个通用档位。选到上游不认的档位会得到上游的错误，届时直接编辑该条目的 `variants` 即可。条目里已有的自定义档位会在下次同步时被这份菜单替换。
 
 这份档位表与 Codex 模型目录的 `supported_reasoning_levels` 是**同一份**（`internal/adroute/reasoning.go` 的 `ReasoningLevels`），两个客户端渲染成各自的形状但内容永远一致，不会出现某个档位只对一个客户端可见。默认档位保持 `none`（不发送 `reasoning.effort`），发布菜单不会自动提高成本或延迟。
@@ -40,7 +42,8 @@
 {
   "adroute/pixel/daily-coder": {
     "name": "Daily Coder",
-    "modelID": "adroute/pixel/daily-coder"
+    "modelID": "adroute/pixel/daily-coder",
+    "limit": { "context": 200000 }
   }
 }
 ```

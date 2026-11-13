@@ -281,6 +281,23 @@ func (s *Store) SetModelExposure(id string, enabled bool) error {
 	})
 }
 
+// SetModelContextWindow publishes one model's context window to clients. Zero
+// clears it, which makes every client fall back to its own default. This is a
+// client-side hint only: adroute never truncates or rejects a request by it.
+func (s *Store) SetModelContextWindow(id string, value int) error {
+	if value != 0 && (value < MinContextWindow || value > MaxContextWindow) {
+		return appError(fmt.Sprintf("上下文窗口必须在 %d 到 %d 之间，或留空表示不设置。", MinContextWindow, MaxContextWindow), 400, "CONTEXT_WINDOW_INVALID")
+	}
+	return s.mutate(func(st *State) error {
+		index := modelIndex(st, id)
+		if index < 0 {
+			return appError("模型条目不存在。", 404, "MODEL_NOT_FOUND")
+		}
+		st.Models[index].ContextWindow = value
+		return nil
+	})
+}
+
 func (s *Store) SetModelEnabled(id string, enabled bool) error {
 	return s.mutate(func(st *State) error {
 		index := modelIndex(st, id)

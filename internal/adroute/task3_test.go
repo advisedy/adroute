@@ -959,7 +959,7 @@ func TestReasoningLevelsAreSharedByEveryClient(t *testing.T) {
 	}
 
 	// Codex catalog: supported_reasoning_levels[].effort
-	entry := catalogEntry("adroute/a/b", "B", 0)
+	entry := catalogEntry("adroute/a/b", "B", 0, 0)
 	codex, _ := entry["supported_reasoning_levels"].([]map[string]string)
 	if len(codex) != len(ReasoningLevels) {
 		t.Fatalf("codex levels = %#v", codex)

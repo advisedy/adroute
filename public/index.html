@@ -197,11 +197,8 @@
         <input id="model-base-url" type="url" required placeholder="https://example.invalid/v1" autocomplete="off" spellcheck="false">
         <p class="field-error" id="model-error-baseurl" role="alert" hidden></p>
         <label for="model-api-key">上游 API Key <span class="required-text" id="model-api-key-required">必填</span></label>
-        <div class="inline-row">
-          <input id="model-api-key" type="password" autocomplete="off" spellcheck="false" placeholder="输入上游 API Key">
-          <button id="model-api-key-toggle" class="button subtle small-button" type="button" aria-pressed="false">显示</button>
-        </div>
-        <p id="model-api-key-help" class="field-help">保存后默认遮蔽；留空编辑表示保留已保存的密钥。</p>
+        <input id="model-api-key" type="text" autocomplete="off" spellcheck="false" placeholder="输入上游 API Key">
+        <p id="model-api-key-help" class="field-help">保存后不会在列表中展示；编辑时保持原样即不修改。</p>
         <p class="field-error" id="model-error-apikey" role="alert" hidden></p>
         <label for="model-real-id">上游真实模型 ID <span class="required-text">必填</span></label>
         <div class="inline-row"><input id="model-real-id" type="text" required maxlength="256" autocomplete="off" spellcheck="false" placeholder="例如 vendor/model"><button id="model-discover" class="button subtle small-button" type="button">获取模型</button></div>
@@ -268,6 +265,22 @@
     <div class="dialog-heading"><div><p class="eyebrow">IMPORT CONFIGURATION</p><h2 id="import-title">确认导入配置？</h2></div><button class="icon-button" type="button" data-close-dialog="import-dialog" aria-label="关闭导入确认">×</button></div>
     <div class="dialog-body"><p>导入将覆盖当前所有模型、分组、默认模型和兼容修复绑定，无法撤销。建议先导出当前配置作为备份。</p><p class="field-help">本机管理令牌和代理密钥不会改变。导入文件包含明文上游 API Key，请妥善保管。</p><p id="import-error" class="form-error" role="alert" hidden></p></div>
     <div class="dialog-footer end"><button class="button secondary" type="button" data-close-dialog="import-dialog" autofocus>取消</button><button id="import-confirm" class="button danger" type="button">确认覆盖并导入</button></div>
+  </dialog>
+
+  <dialog id="params-dialog" class="dialog" aria-labelledby="params-title">
+    <form id="params-form" novalidate>
+      <div class="dialog-heading"><div><p class="eyebrow">CLIENT HINT</p><h2 id="params-title">修改详细参数</h2></div><button class="icon-button" type="button" data-close-dialog="params-dialog" aria-label="关闭详细参数">×</button></div>
+      <div class="dialog-body">
+        <p class="muted dialog-intro">这些值只写给客户端参考，adroute 不会因此截断或拒绝请求。</p>
+        <p class="field-help" id="params-model-name"></p>
+        <label for="params-context-window">上下文窗口 <span class="required-text">可选</span></label>
+        <input id="params-context-window" type="number" min="1024" max="10000000" step="1" autocomplete="off" spellcheck="false" placeholder="例如 200000">
+        <p class="field-help">按 token 计。填写后接入的客户端会按这个值判断何时压缩历史；留空表示不设置，由客户端自己决定。聚合模型取所有成员的最小值，任一个没填就不设置。</p>
+        <p class="field-error" id="params-error-contextwindow" role="alert" hidden></p>
+        <p id="params-error" class="form-error" role="alert" hidden></p>
+      </div>
+      <div class="dialog-footer end"><button class="button secondary" type="button" data-close-dialog="params-dialog">取消</button><button id="params-save" class="button primary" type="submit">保存参数</button></div>
+    </form>
   </dialog>
 
   <dialog id="delete-dialog" class="dialog" aria-labelledby="delete-title">

@@ -8,6 +8,7 @@
 
   let token = '', epoch = 0, state = null, tab = 'models', setup = null, clients = null;
   let editingModel = null, filterGroup = '', deleting = null, nameTouched = false, formVersion = 0, discoverVersion = 0;
+  let editingParams = null, paramsVersion = 0;
   let loadingState = false, toastTimer;
   let groupsVersion = 0, deleteVersion = 0, defaultIntent = '';
   let stateUpdateVersion = 0;
@@ -65,13 +66,14 @@
   function remember(value) { try { if (value) sessionStorage.setItem(SESSION, value); else sessionStorage.removeItem(SESSION); } catch { /* tabs may block storage */ } }
   function toast(value) { clearTimeout(toastTimer); notice('toast', value); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 4500); }
   // This identity stays private in memory; it is never rendered or persisted.
-  function modelSignature(model) { return JSON.stringify([model.groupId, model.groupName, model.name, model.model, model.baseUrl, model.apiKey, model.profile]); }
+  function modelSignature(model) { return JSON.stringify([model.groupId, model.groupName, model.name, model.model, model.baseUrl, model.apiKey, model.profile, model.contextWindow]); }
   function modelWriteKey() { return editingModel ? `model:${editingModel.id}` : `new-model:${formVersion}`; }
   function aggregateWriteKey() { return `aggregate:${editingAggregate ? editingAggregate.id : 'new:' + aggregateVersion}`; }
   function groupName(id) { return state?.groups.find(group => group.id === id)?.name || ''; }
   function closeDialog(id) {
     if ($(id).open) $(id).close();
     if (id === 'model-dialog') { editingModel = null; nameTouched = false; formVersion++; $('model-form').reset(); resetDiscovery(); clearFieldErrors(); notice('model-error'); }
+    if (id === 'params-dialog') { editingParams = null; paramsVersion++; $('params-form').reset(); notice('params-error'); notice('params-error-contextwindow'); }
     if (id === 'aggregate-dialog') { editingAggregate = null; aggregateVersion++; $('aggregate-form').reset(); notice('aggregate-error'); for (const name of ['name', 'members', 'rounds']) notice(`aggregate-error-${name}`); }
     if (id === 'delete-dialog') { deleting = null; deleteVersion++; }
     if (id === 'groups-dialog') { groupsVersion++; groupDrafts.clear(); }
@@ -94,11 +96,11 @@
     for (const kind of ['model', 'aggregate']) {
       $(`${kind}-search`).value = ''; $(`${kind}-include-archived`).checked = false; $(`${kind}-exposure-filter`).value = 'all';
     }
-    token = ''; remember(''); state = setup = clients = editingModel = deleting = editingAggregate = null;
+    token = ''; remember(''); state = setup = clients = editingModel = deleting = editingAggregate = editingParams = null;
     importDraft = null; $('import-config-file').value = '';
-    filterGroup = ''; tab = 'models'; loadingState = false; formVersion++; discoverVersion++; groupsVersion++; deleteVersion++; defaultIntent = '';
+    filterGroup = ''; tab = 'models'; loadingState = false; formVersion++; discoverVersion++; groupsVersion++; deleteVersion++; paramsVersion++; defaultIntent = '';
     for (const dialog of document.querySelectorAll('dialog')) if (dialog.open) dialog.close();
-    for (const id of ['auth-form', 'model-form', 'group-create-form', 'aggregate-form']) $(id).reset();
+    for (const id of ['auth-form', 'model-form', 'group-create-form', 'aggregate-form', 'params-form']) $(id).reset();
     for (const id of ['codex-config', 'setup-url', 'model-list', 'aggregate-list', 'aggregate-members', 'all-requests', 'group-list', 'model-discover-results', 'delete-model-name', 'delete-model-route', 'request-detail-body', 'group-filter', 'default-model', 'request-meta-time', 'request-meta-group', 'request-meta-route', 'request-meta-model', 'request-meta-effort', 'request-meta-status', 'request-meta-duration']) { const element = $(id); if (element) element.replaceChildren(); }
     for (const id of ['client-base-url', 'client-api-key', 'admin-token']) $(id).value = '';
     $('client-api-key').type = 'password'; text('toggle-client-api-key', '显示');
@@ -157,6 +159,7 @@
     $('aggregate-save').disabled = !ready || pendingWrites.has(aggregateWriteKey());
     $('model-create-group').disabled = !ready || pendingWrites.has(`inline-group:${formVersion}`);
     $('delete-submit').disabled = !ready || pendingWrites.has(`delete:${deleting}`);
+    $('params-save').disabled = !ready || pendingWrites.has(`params:${editingParams}`);
     $('group-create-submit').disabled = !ready || pendingWrites.has('group-create-submit');
     $('default-model').disabled = !ready || pendingWrites.has('default-model');
     $('catalog-retry').disabled = !ready || pendingWrites.has('catalog-retry');
@@ -629,7 +632,8 @@
       meta.append(wrap);
     }
     const connection = node('div', undefined, 'connection-details');
-    connection.append(meta, node('p', '上游密钥不在列表展示。编辑时留空即保留。', 'field-help'));
+    connection.append(meta, node('p', '上游密钥不在列表展示；编辑时保持原样即不修改。', 'field-help'));
+    if (model.contextWindow > 0) connection.append(node('p', `上下文窗口 ${model.contextWindow.toLocaleString('en-US')} tokens`, 'field-help'));
 
     const testRegion = node('div', undefined, 'model-test');
     testRegion.dataset.testRegion = model.id;
@@ -644,6 +648,7 @@
     const edit = button('编辑', () => openModelForm(model), 'button subtle small-button');
     const test = button(testing ? '测速中' : '测速', () => startQuickTest(model.id), 'button subtle small-button');
     const copy = button('复制', () => copyModel(model, copy), 'button subtle small-button');
+    const params = button('修改详细参数', () => openParamsDialog(model), 'button subtle small-button');
     const remove = button('删除', () => openDelete(model), 'button subtle small-button danger');
     const website = button('打开网站', () => {
       const url = state.models.find(item => item.id === model.id)?.website || model.website;
@@ -652,8 +657,8 @@
     website.dataset.modelAction = 'open-website';
     website.disabled = !model.website;
     website.title = model.website ? model.website : '尚未填写网站地址；编辑模型可添加。';
-    edit.dataset.modelAction = 'edit'; test.dataset.modelAction = 'test'; copy.dataset.modelAction = 'copy'; remove.dataset.modelAction = 'delete';
-    for (const control of [edit, test, copy, remove]) {
+    edit.dataset.modelAction = 'edit'; test.dataset.modelAction = 'test'; copy.dataset.modelAction = 'copy'; params.dataset.modelAction = 'params'; remove.dataset.modelAction = 'delete';
+    for (const control of [edit, test, copy, params, remove]) {
       control.disabled = testing || !backendReady();
       if (control !== test) control.disabled = control.disabled || pendingAvailability.has(model.id);
     }
@@ -661,7 +666,7 @@
     const setDefault = button('设为默认', () => changeDefault(model.id), 'button subtle small-button');
     setDefault.dataset.modelAction = 'default';
     const details = entryDetails(model.id, connection);
-    actions.append(test, edit, actionMenu([setDefault, copy, website, ...(model.archived ? [] : [archive]), remove]), details.toggle);
+    actions.append(test, edit, actionMenu([setDefault, copy, params, website, ...(model.archived ? [] : [archive]), remove]), details.toggle);
     if (model.archived) actions.prepend(archive);
     if (model.disabled) actions.prepend(restoreAvailabilityButton(model));
     controls.append(toggleLabel, actions);
@@ -917,12 +922,13 @@
     $('model-save').textContent = model ? '保存修改' : '保存模型';
     renderGroupOptions(model?.groupId || filterGroup || '');
     $('model-base-url').value = model?.baseUrl || '';
-    $('model-api-key').value = '';
-    $('model-api-key').type = 'password'; text('model-api-key-toggle', '显示');
-    $('model-api-key').setAttribute('aria-pressed', 'false');
-    $('model-api-key').placeholder = model ? '留空保留已保存的上游 API Key' : '输入上游 API Key';
+    // The saved credential is shown in plain text so the field always holds the
+    // real value; saving an unchanged value submits nothing, which keeps the
+    // "stale draft never overwrites" property.
+    $('model-api-key').value = model?.apiKey || '';
+    $('model-api-key').placeholder = model ? '留空表示不修改已保存的上游 API Key' : '输入上游 API Key';
     $('model-api-key-required').hidden = Boolean(model);
-    $('model-api-key-help').textContent = model ? '已保存的密钥不会回显；留空表示保留，输入新值才会替换。' : '保存后默认遮蔽；它只是这个模型的上游凭据。';
+    $('model-api-key-help').textContent = model ? '已保存的密钥；保持原样即不修改，改成新值才会替换。它不会在模型列表展示。' : '保存后不会在列表中展示；它只是这个模型的上游凭据。';
     $('model-real-id').value = model?.model || '';
     $('model-website').value = model?.website || '';
     $('model-name').value = model?.name || '';
@@ -953,9 +959,9 @@
     const apiKey = $('model-api-key').value.trim();
     if (!baseUrl) { fieldError('baseurl', '请先填写上游 Base URL。'); return; }
     if (!apiKey && !editingModel) { fieldError('apikey', '获取模型需要填写上游 API Key。'); return; }
-    // With an untouched credential field on an existing model, the request uses
+    // With an unchanged credential field on an existing model, the request uses
     // the saved credential for that entry; a typed value always wins.
-    const useSaved = Boolean(editingModel) && !apiKey;
+    const useSaved = Boolean(editingModel) && (!apiKey || apiKey === editingModel.apiKey);
     const path = useSaved ? `/api/models/${editingModel.id}/discover` : '/api/models/discover';
     const body = useSaved ? { baseUrl } : { baseUrl, apiKey };
     $('model-discover').disabled = true;
@@ -997,7 +1003,9 @@
       website: $('model-website').value.trim(),
     };
     const apiKey = $('model-api-key').value.trim();
-    if (apiKey || !editingModel) body.apiKey = apiKey;
+    // Only a changed credential is submitted, so an untouched draft can never
+    // overwrite a key that was rotated elsewhere in the meantime.
+    if (!editingModel || apiKey !== (editingModel.apiKey || '')) body.apiKey = apiKey;
     if (!editingModel) body.exposureDisabled = !$('model-open').checked;
     return body;
   }
@@ -1021,6 +1029,20 @@
       $('model-new-group').value = '';
       updateRoutePreview();
     }, current, `inline-group:${version}`);
+  }
+
+  // A separate dialog on purpose: one published number should not be reachable
+  // only by reopening the whole model form, where a stale draft could rewrite
+  // the entry.
+  function openParamsDialog(model) {
+    editingParams = model.id;
+    paramsVersion++;
+    $('params-form').reset();
+    notice('params-error'); notice('params-error-contextwindow');
+    text('params-model-name', `${model.groupName} / ${model.name}`);
+    $('params-context-window').value = model.contextWindow > 0 ? String(model.contextWindow) : '';
+    $('params-dialog').showModal();
+    syncPendingControls();
   }
 
   function openDelete(model) {
@@ -1461,13 +1483,6 @@
   $('model-group').addEventListener('change', () => { notice('model-error-group'); updateRoutePreview(); });
   $('model-new-group').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); createGroupInline(); } });
   $('model-create-group').addEventListener('click', createGroupInline);
-  $('model-api-key-toggle').addEventListener('click', () => {
-    const field = $('model-api-key');
-    const reveal = field.type === 'password';
-    field.type = reveal ? 'text' : 'password';
-    text('model-api-key-toggle', reveal ? '隐藏' : '显示');
-    $('model-api-key-toggle').setAttribute('aria-pressed', String(reveal));
-  });
   $('model-discover').addEventListener('click', discoverModels);
   $('model-discover-search').addEventListener('input', showDiscoveredModels);
   $('model-api-key').addEventListener('input', () => { resetDiscovery(); notice('model-error-apikey'); });
@@ -1484,7 +1499,7 @@
     let ok = true;
     if (!$('model-group').value) { fieldError('group', '请选择模型组，或先创建一个组。'); ok = false; }
     if (!$('model-base-url').value.trim()) { fieldError('baseurl', '请填写上游 Base URL。'); ok = false; }
-    if (!context && !$('model-api-key').value.trim()) { fieldError('apikey', '请填写这个模型的上游 API Key。'); ok = false; }
+    if (!$('model-api-key').value.trim()) { fieldError('apikey', context ? '请填写这个模型的上游 API Key；留空无法保存。' : '请填写这个模型的上游 API Key。'); ok = false; }
     if (!$('model-real-id').value.trim()) { fieldError('realid', '请填写上游真实模型 ID。'); ok = false; }
     if (!validateNameField()) ok = false;
     const website = $('model-website').value.trim();
@@ -1514,6 +1529,27 @@
       applyState(await api('/api/groups', { method: 'POST', body: { name } }));
       if (current()) $('group-create-form').reset();
     }, current);
+  });
+
+  $('params-form').addEventListener('submit', event => {
+    event.preventDefault();
+    const target = editingParams;
+    if (!target) return;
+    const version = paramsVersion, current = () => version === paramsVersion && editingParams === target && $('params-dialog').open;
+    notice('params-error'); notice('params-error-contextwindow');
+    const raw = $('params-context-window').value.trim();
+    let value = 0;
+    if (raw) {
+      if (!/^\d+$/.test(raw) || Number(raw) < 1024 || Number(raw) > 10000000) {
+        notice('params-error-contextwindow', '上下文窗口必须是 1024 到 10000000 之间的整数，或留空表示不设置。');
+        return;
+      }
+      value = Number(raw);
+    }
+    action($('params-save'), 'params-error', async () => {
+      applyState(await api(`/api/models/${target}/params`, { method: 'PUT', body: { contextWindow: value } }));
+      if (current()) { closeDialog('params-dialog'); toast(value ? '上下文窗口已保存，客户端下次获取目录时生效。' : '上下文窗口已清空，由客户端自己决定。'); }
+    }, current, `params:${target}`);
   });
 
   $('delete-form').addEventListener('submit', event => {

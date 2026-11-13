@@ -51,7 +51,7 @@ test('a stale edit draft cannot reopen a model the server closed meanwhile', { t
   await f.login();
   await row(page, 'seed-model').getByRole('button', { name: '编辑', exact: true }).click();
   await expect(page.locator('#model-dialog')).toBeVisible();
-  await expect(page.locator('#model-api-key')).toHaveValue('');
+  await expect(page.locator('#model-api-key')).toHaveValue('seed-key');
   // Server-side close while the form is open.
   const closed = await f.api('/api/models/seed-model/exposure', 'PUT', { enabled: false });
   assert.equal(closed.status, 200);

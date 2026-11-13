@@ -189,3 +189,58 @@ test('aggregate organization is persistent and mutation controls stay single-fli
  await expect(card.getByRole('button',{name:'取消收藏',exact:true})).toBeEnabled();await more(card);await card.getByRole('button',{name:'归档',exact:true}).click();await expect(card).toHaveCount(0);
  await f.page.locator('#aggregates-panel').getByRole('button',{name:'已归档',exact:true}).click();await expect(card).toBeVisible();await card.getByRole('button',{name:'恢复',exact:true}).click();await expect(card).toHaveCount(0);
 });
+
+test('the parameters dialog publishes a context window and leaves the credential alone',{timeout:90000},async t=>{
+ const f=await goBrowserFixture(t,{initialState:seedState()});const {page}=f;await f.login();
+ await more(row(page,'seed-model'));await row(page,'seed-model').getByRole('button',{name:'修改详细参数',exact:true}).click();
+ await expect(page.locator('#params-dialog')).toBeVisible();
+ await expect(page.locator('#params-model-name')).toHaveText('seed / seeded');
+ await expect(page.locator('#params-context-window')).toHaveValue('');
+ await page.locator('#params-context-window').fill('200000');
+ await page.locator('#params-save').click();
+ await expect(page.locator('#params-dialog')).toBeHidden();
+ let state=await f.state();
+ assert.equal(state.models[0].contextWindow,200000);
+ assert.equal(state.models[0].apiKey,'seed-key','the narrow write must not touch the credential');
+ assert.equal(state.models[0].baseUrl,'https://seed.invalid/v1');
+ await row(page,'seed-model').getByRole('button',{name:'详情',exact:true}).click();
+ await expect(page.locator('#entry-details-seed-model')).toContainText('200,000');
+
+ // Clearing publishes nothing, so the client keeps its own fallback.
+ await more(row(page,'seed-model'));await row(page,'seed-model').getByRole('button',{name:'修改详细参数',exact:true}).click();
+ await expect(page.locator('#params-context-window')).toHaveValue('200000');
+ await page.locator('#params-context-window').fill('');
+ await page.locator('#params-save').click();
+ await expect(page.locator('#params-dialog')).toBeHidden();
+ assert.equal((await f.state()).models[0].contextWindow,0);
+
+ // An out-of-range value is refused in the form, before any request.
+ await more(row(page,'seed-model'));await row(page,'seed-model').getByRole('button',{name:'修改详细参数',exact:true}).click();
+ await page.locator('#params-context-window').fill('10');
+ await page.locator('#params-save').click();
+ await expect(page.locator('#params-error-contextwindow')).toBeVisible();
+ await expect(page.locator('#params-dialog')).toBeVisible();
+ assert.equal((await f.state()).models[0].contextWindow,0);
+});
+
+test('editing a model shows its saved credential and submits it only when changed',{timeout:90000},async t=>{
+ const f=await goBrowserFixture(t,{initialState:seedState()});const {page}=f;await f.login();
+ const bodies=[];page.on('request',r=>{if(r.method()==='PUT'&&/\/api\/models\/seed-model$/.test(r.url()))bodies.push(JSON.parse(r.postData()));});
+ await row(page,'seed-model').getByRole('button',{name:'编辑',exact:true}).click();
+ await expect(page.locator('#model-api-key')).toHaveAttribute('type','text');
+ await expect(page.locator('#model-api-key')).toHaveValue('seed-key');
+ await page.locator('#model-real-id').fill('seeded-model-2');
+ await page.locator('#model-save').click();
+ await expect(page.locator('#model-dialog')).toBeHidden();
+ assert.equal(bodies.length,1);
+ assert.ok(!('apiKey' in bodies[0]),'an untouched credential must not be submitted');
+ assert.equal((await f.state()).models[0].apiKey,'seed-key');
+
+ await row(page,'seed-model').getByRole('button',{name:'编辑',exact:true}).click();
+ await page.locator('#model-api-key').fill('rotated-key');
+ await page.locator('#model-save').click();
+ await expect(page.locator('#model-dialog')).toBeHidden();
+ assert.equal(bodies[1].apiKey,'rotated-key');
+ assert.equal((await f.state()).models[0].apiKey,'rotated-key');
+ await expect(page.locator('#model-list')).not.toContainText('rotated-key');
+});

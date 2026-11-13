@@ -32,7 +32,7 @@ func (a *HTTPApp) stateJSON() map[string]any {
 	models := []map[string]any{}
 	for _, m := range st.Models {
 		r := routeFor(st, m)
-		models = append(models, map[string]any{"id": m.ID, "groupId": m.GroupID, "groupName": r.GroupName, "name": m.Name, "model": m.Model, "baseUrl": m.BaseURL, "apiKey": m.APIKey, "website": m.Website, "disabled": m.Disabled, "exposureDisabled": m.ExposureDisabled, "favorite": m.Favorite, "archived": m.Archived, "open": !m.Disabled && !m.ExposureDisabled, "profile": m.Profile, "routeId": r.RouteID})
+		models = append(models, map[string]any{"id": m.ID, "groupId": m.GroupID, "groupName": r.GroupName, "name": m.Name, "model": m.Model, "baseUrl": m.BaseURL, "apiKey": m.APIKey, "website": m.Website, "disabled": m.Disabled, "exposureDisabled": m.ExposureDisabled, "favorite": m.Favorite, "archived": m.Archived, "contextWindow": m.ContextWindow, "open": !m.Disabled && !m.ExposureDisabled, "profile": m.Profile, "routeId": r.RouteID})
 	}
 	aggregates := []map[string]any{}
 	for _, agg := range st.Aggregates {
@@ -147,6 +147,27 @@ func (a *HTTPApp) managementAPI(w http.ResponseWriter, r *http.Request) bool {
 		}
 		if err != nil {
 			a.fail(w, err)
+		} else {
+			writeState(200)
+		}
+		return true
+	}
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "models" && parts[3] == "params" && r.Method == http.MethodPut {
+		// A narrow endpoint on purpose: editing one published number must not
+		// require resending group, name, upstream id and credential, where one
+		// stale field would silently rewrite the entry.
+		var v struct {
+			ContextWindow *int `json:"contextWindow"`
+		}
+		if !decode(64<<10, &v) {
+			return true
+		}
+		if v.ContextWindow == nil {
+			a.fail(w, appError("contextWindow 必须是整数；传 0 表示不设置。", 400, "INVALID_REQUEST"))
+			return true
+		}
+		if e := s.SetModelContextWindow(parts[2], *v.ContextWindow); e != nil {
+			a.fail(w, e)
 		} else {
 			writeState(200)
 		}
@@ -482,7 +503,8 @@ func (a *HTTPApp) managementAPI(w http.ResponseWriter, r *http.Request) bool {
 			for _, entry := range entries {
 				slug, _ := entry["slug"].(string)
 				name, _ := entry["display_name"].(string)
-				models = append(models, SyncModel{Slug: slug, DisplayName: name})
+				window, _ := entry["context_window"].(int)
+				models = append(models, SyncModel{Slug: slug, DisplayName: name, ContextWindow: window})
 			}
 		}
 		res, e := SyncOpenCode(OpenCodeSyncOptions{Models: models, ConfigPath: v.ConfigPath})

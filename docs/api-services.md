@@ -107,6 +107,7 @@ adroute/agg/<聚合名称>
 | `DELETE /api/models/:id` | — | 删除模型；仍被聚合引用返回 409 `MODEL_IN_USE` |
 | `PUT /api/models/:id/availability` | `{enabled}` | 原有启用／停用，严格布尔；停用影响聚合成员并清空默认 |
 | `PUT /api/models/:id/exposure` | `{enabled}` | 对外开放／关闭，严格布尔；不影响内部可用性与默认选择 |
+| `PUT /api/models/:id/params` | `{contextWindow}` | 只写上下文窗口；0 表示不设置。窄接口，不触碰分组、地址、凭据或开放状态 |
 | `POST /api/aggregates` | `{name,members,maxRounds?,disabled?}` | 新建聚合，201 |
 | `PUT /api/aggregates/:id` | `{name,members,maxRounds?,disabled?}` | 编辑聚合 |
 | `DELETE /api/aggregates/:id` | — | 删除聚合 |
@@ -127,6 +128,8 @@ adroute/agg/<聚合名称>
 | `POST /api/opencode/sync` | `{configPath?}` | 显式同步 OpenCode，见 [同步说明](opencode-sync.md) |
 
 模型和聚合的创建/编辑均接受可选严格布尔字段 `exposureDisabled`。`POST /api/models` 要求必要连接字段；`PUT /api/models/:id` 省略 `apiKey` 或传空串表示保留已保存的密钥，省略 `disabled`、`exposureDisabled` 分别保持当前停用、对外开放状态（因此陈旧草稿不会重新开放条目）。`/api/state` 返回这两个字段，`open` 为未停用且对外开放；`capabilities.modelExposure` 表示支持独立对外开放接口。
+
+`contextWindow` 是可选的客户端提示，单位为 token，`0`／省略表示不发布。非零值必须在 1024~10000000 之间，接口返回 400 `CONTEXT_WINDOW_INVALID`，手改配置文件也会在加载时被同一规则拒绝。它只写入 Codex 目录的 `context_window` 与 OpenCode 的 `limit.context`；adroute 不会据此裁剪历史、拒绝请求或校验上游能力，窗口值只影响客户端本地压缩时机与用量百分比。聚合模型只有在所有成员都填了值时才发布，取其中最小值；任一成员为空则整个聚合不发布。`adroute/default` 发布其解析目标的窗口值。窄接口 `PUT /api/models/:id/params` 只接受 `contextWindow`，不接受其他字段。
 
 `capabilities.organization` 表示支持收纳接口。接口拒绝空对象、null、非布尔值和未知字段；分组不接受 `favorite`。收纳写入使用与模型编辑相同的原子持久化与 revision 边界。`/api/state` 在模型、聚合中返回显式 `favorite`、`archived`，在组中返回 `archived`；模型 `archived` 是自身标记，管理界面还需叠加所属组的标记。
 

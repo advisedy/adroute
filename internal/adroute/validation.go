@@ -28,6 +28,13 @@ const (
 	MaxAggregateSize   = 8
 	DefaultMaxRounds   = 5
 	MaxAggregateRounds = 10
+
+	// Context window bounds. Zero means "do not publish a value", so a client
+	// falls back to its own default instead of trusting a number adroute made
+	// up. A non-zero value must fit a real model: below MinContextWindow no
+	// conversation fits, and above MaxContextWindow no current model reaches.
+	MinContextWindow = 1024
+	MaxContextWindow = 10000000
 )
 
 func ValidateState(s State) error {
@@ -109,6 +116,9 @@ func ValidateState(s State) error {
 		}
 		if !(m.Profile == "none" || validProfileRef(m.Profile)) {
 			return fmt.Errorf("invalid adapter profile")
+		}
+		if m.ContextWindow != 0 && (m.ContextWindow < MinContextWindow || m.ContextWindow > MaxContextWindow) {
+			return fmt.Errorf("invalid context window")
 		}
 		if m.Profile != "none" && !refs[m.Profile] {
 			return appError("adapter reference not found", 409, "ADAPTER_NOT_FOUND")

@@ -95,6 +95,7 @@ type Model struct {
 	ExposureDisabled bool   `json:"exposureDisabled,omitempty"`
 	Favorite         bool   `json:"favorite,omitempty"`
 	Archived         bool   `json:"archived,omitempty"`
+	ContextWindow    int    `json:"contextWindow,omitempty"`
 	Profile          string `json:"profile"`
 }
 
@@ -127,6 +128,9 @@ func (v *Model) UnmarshalJSON(b []byte) error {
 	}
 	if raw, ok := fields["apiKey"]; ok && string(raw) == "null" {
 		return fmt.Errorf("apiKey must be a string")
+	}
+	if raw, ok := fields["contextWindow"]; ok && string(raw) == "null" {
+		return fmt.Errorf("contextWindow must be an integer")
 	}
 	return validateOrganizationJSON(b)
 }
