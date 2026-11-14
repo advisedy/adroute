@@ -94,12 +94,13 @@
   function aggregateFieldError(name, value) { notice(`aggregate-error-${name}`, value); }
   function clearSession(value = '') {
     closeTestDetail();
+    closeNote();
     epoch++;
     compatibility.reset();
     for (const controller of controllers) controller.abort();
     controllers.clear();
     for (const operation of pendingTests.values()) operation.controller.abort();
-    pendingTests.clear(); testResults.clear(); collapsedGroups.clear(); pendingAvailability.clear(); pendingBulk.clear(); unknownExposure.clear(); pendingWrites.clear(); groupDrafts.clear();
+    pendingTests.clear(); testResults.clear(); collapsedGroups.clear(); noteVisibility.clear(); pendingAvailability.clear(); pendingBulk.clear(); unknownExposure.clear(); pendingWrites.clear(); groupDrafts.clear();
     expandedEntries.clear(); collections.models = collections.aggregates = null;
     for (const kind of ['model', 'aggregate']) {
       $(`${kind}-search`).value = ''; $(`${kind}-include-archived`).checked = false; $(`${kind}-exposure-filter`).value = 'all';
@@ -480,6 +481,17 @@
     return control;
   }
 
+  function actionMenu(controls, label = '更多', accessibleName) {
+    const menu = node('details', undefined, 'action-menu');
+    const summary = node('summary', label);
+    if (accessibleName) summary.setAttribute('aria-label', accessibleName);
+    const items = node('div', undefined, 'action-menu-items');
+    items.append(...controls); menu.append(summary, items);
+    menu.addEventListener('toggle', () => { if (menu.open) for (const other of document.querySelectorAll('.action-menu[open]')) if (other !== menu) other.open = false; });
+    items.addEventListener('click', event => { if (event.target.closest('button') && !event.target.closest('button').disabled) menu.open = false; });
+    return menu;
+  }
+
   function groupArchiveButton(group) {
     const control = button(group.archived ? '恢复分组' : '归档分组', () => updateOrganization('groups', group, { archived: !group.archived }, control), 'button subtle small-button group-archive');
     control.dataset.organizationKey = `group:${group.id}`;
@@ -487,14 +499,253 @@
     return control;
   }
 
-  function actionMenu(controls) {
-    const menu = node('details', undefined, 'action-menu');
-    const summary = node('summary', '更多');
-    const items = node('div', undefined, 'action-menu-items');
-    items.append(...controls); menu.append(summary, items);
-    menu.addEventListener('toggle', () => { if (menu.open) for (const other of document.querySelectorAll('.action-menu[open]')) if (other !== menu) other.open = false; });
-    items.addEventListener('click', event => { if (event.target.closest('button') && !event.target.closest('button').disabled) menu.open = false; });
-    return menu;
+  // ---- group notes ------------------------------------------------------
+  // Each group stands for one upstream relay, so the memo holds the judgement
+  // about that relay. The text is stored server-side with the group; only the
+  // "show the icon" preference stays in this browser.
+
+  // Per-group icon preference: 'shown' pins the icon, 'hidden' keeps it away
+  // even when the group has a memo, and no entry falls back to "show it only
+  // if there is something to read". 关闭便签 writes 'hidden'; closing the card
+  // any other way leaves the preference alone.
+  const NOTE_VISIBILITY_KEY = 'adroute.groupNoteVisibility';
+  const LEGACY_NOTE_ICONS_KEY = 'adroute.groupNoteIcons';
+  const noteVisibility = new Map();
+  function loadNoteVisibility() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(NOTE_VISIBILITY_KEY) || '{}');
+      if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+        for (const [id, value] of Object.entries(saved)) {
+          if (value === 'shown' || value === 'hidden') noteVisibility.set(id, value);
+        }
+      }
+      // The previous release only remembered which icons to show; keep those.
+      const legacy = JSON.parse(localStorage.getItem(LEGACY_NOTE_ICONS_KEY) || '[]');
+      if (Array.isArray(legacy)) for (const id of legacy) if (typeof id === 'string' && !noteVisibility.has(id)) noteVisibility.set(id, 'shown');
+    } catch { /* optional browser preference */ }
+  }
+  function saveNoteVisibility() {
+    try { localStorage.setItem(NOTE_VISIBILITY_KEY, JSON.stringify(Object.fromEntries(noteVisibility))); } catch { /* storage may be unavailable */ }
+  }
+  function noteIconVisible(group) {
+    const preference = noteVisibility.get(group.id);
+    return preference === 'shown' || (preference !== 'hidden' && !!group.note);
+  }
+
+  const NOTE_CLOSE_DELAY = 160, NOTE_SAVE_DELAY = 700;
+  let noteEditor = null, noteCloseTimer = 0, noteSuppressFocus = false;
+
+  function noteGroup(id) { return state?.groups.find(group => group.id === id); }
+  function notesReady() { return backendReady() && state?.capabilities?.groupNotes === true; }
+
+  function noteTrigger(group) {
+    const control = node('button', undefined, 'group-note-trigger');
+    control.type = 'button';
+    control.dataset.noteKey = group.id;
+    control.setAttribute('aria-label', `便签 ${group.name}`);
+    control.setAttribute('aria-expanded', 'false');
+    control.title = group.note ? '查看便签' : '打开便签';
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true');
+    for (const d of ['M5 4a1 1 0 0 1 1-1h8l5 5v12a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1Z', 'M14 3v5h5', 'M9 13h6', 'M9 17h4']) {
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', d); svg.append(path);
+    }
+    control.append(svg);
+    const open = options => openNote(group.id, control, options);
+    control.addEventListener('pointerenter', event => { if (event.pointerType === 'mouse') open({ pinned: false, focus: false }); });
+    control.addEventListener('pointerleave', () => scheduleNoteClose());
+    control.addEventListener('focus', () => { if (!noteSuppressFocus) open({ pinned: false, focus: false }); });
+    control.addEventListener('click', () => {
+      if (noteEditor?.open && noteEditor.groupId === group.id && noteEditor.pinned) { closeNote(true); return; }
+      open({ pinned: true, focus: true });
+    });
+    control.addEventListener('keydown', event => {
+      if (event.key === 'Tab' && !event.shiftKey && noteEditor?.open && noteEditor.groupId === group.id) {
+        event.preventDefault(); noteEditor.input.focus();
+      }
+    });
+    return control;
+  }
+
+  function buildNoteEditor() {
+    if (noteEditor) return noteEditor;
+    const root = node('div', undefined, 'group-note-card');
+    root.hidden = true;
+    root.setAttribute('role', 'dialog');
+    root.setAttribute('aria-modal', 'false');
+    const head = node('div', undefined, 'group-note-head');
+    const title = node('strong', undefined, 'group-note-title');
+    title.id = 'group-note-title';
+    root.setAttribute('aria-labelledby', title.id);
+    const status = node('span', undefined, 'group-note-status');
+    head.append(title, status);
+    const input = document.createElement('textarea');
+    input.className = 'group-note-input';
+    input.rows = 4; input.maxLength = 1000; input.spellcheck = false;
+    input.setAttribute('aria-label', '分组便签内容');
+    input.placeholder = '记下这个中转站的评价：稳定性、价格、限流、售后……';
+    const hint = node('p', '直接编辑，停止输入后自动保存。', 'group-note-hint');
+    root.append(head, input, hint);
+    document.body.append(root);
+
+    const editor = { root, title, status, input, groupId: '', anchor: null, open: false, pinned: false, dirty: false, saved: '', hovered: false, timer: 0, saving: false };
+    let resizeFrame = 0;
+    const reposition = () => {
+      if (!editor.open || !editor.anchor) return;
+      cancelAnimationFrame(resizeFrame);
+      resizeFrame = requestAnimationFrame(() => placeNote(editor));
+    };
+    input.addEventListener('input', () => {
+      editor.dirty = input.value !== editor.saved;
+      setNoteStatus(editor, editor.dirty ? '待保存…' : '已保存');
+      clearTimeout(editor.timer);
+      editor.timer = setTimeout(() => saveNote(editor), NOTE_SAVE_DELAY);
+      reposition();
+    });
+    input.addEventListener('focus', () => { clearTimeout(noteCloseTimer); setNoteStatus(editor, editor.status.textContent || ''); });
+    input.addEventListener('blur', () => { if (!editor.hovered) scheduleNoteClose(); });
+    input.addEventListener('keydown', event => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeNote(true); }
+    });
+    root.addEventListener('pointerenter', () => { editor.hovered = true; clearTimeout(noteCloseTimer); });
+    root.addEventListener('pointerleave', () => { editor.hovered = false; scheduleNoteClose(); });
+    root.addEventListener('keydown', event => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeNote(true); }
+    });
+    window.addEventListener('resize', reposition);
+    document.addEventListener('scroll', reposition, true);
+    noteEditor = editor;
+    return editor;
+  }
+
+  function setNoteStatus(editor, value) {
+    editor.status.textContent = value;
+    editor.status.dataset.state = value === '已保存' ? 'saved' : value === '待保存…' || value === '保存中…' ? 'pending' : 'error';
+  }
+
+  // The menu entry is a switch over the icon, not over the card: while the icon
+  // is on the header the entry reads 关闭便签, whether or not the card happens
+  // to be open. Hovering or Escape changes the card only, so the label has to be
+  // resynced rather than baked in at render time.
+  function syncNoteLabels() {
+    for (const control of document.querySelectorAll('.group-note-action')) {
+      const group = noteGroup(control.dataset.noteGroup);
+      const shown = !!group && noteIconVisible(group);
+      control.textContent = shown ? '关闭便签' : '打开便签';
+      control.setAttribute('aria-pressed', String(shown));
+    }
+  }
+
+  function placeNote(editor) {
+    if (!editor.open || !editor.anchor) return;
+    editor.root.style.left = '12px';
+    const anchor = editor.anchor.getBoundingClientRect();
+    const box = editor.root.getBoundingClientRect();
+    editor.root.style.left = `${Math.max(12, Math.min(anchor.left, innerWidth - box.width - 12))}px`;
+    const below = anchor.bottom + 8;
+    editor.root.style.top = `${below + box.height <= innerHeight - 12 ? below : Math.max(12, anchor.top - box.height - 8)}px`;
+  }
+
+  function openNote(groupId, trigger, { pinned = false, focus = false } = {}) {
+    const group = noteGroup(groupId);
+    if (!group || !notesReady()) return;
+    const editor = buildNoteEditor();
+    clearTimeout(noteCloseTimer);
+    if (editor.open && editor.groupId !== groupId) closeNote();
+    if (editor.groupId !== groupId) {
+      editor.groupId = groupId;
+      editor.saved = group.note || '';
+      editor.dirty = false;
+      editor.input.value = editor.saved;
+      setNoteStatus(editor, editor.saved ? '已保存' : '');
+    }
+    editor.title.textContent = `便签 · ${group.name}`;
+    editor.anchor = trigger;
+    editor.pinned = pinned || editor.pinned;
+    editor.hovered = false;
+    const wasOpen = editor.open;
+    editor.open = true;
+    editor.root.hidden = false;
+    trigger.setAttribute('aria-expanded', 'true');
+    placeNote(editor);
+    if (!wasOpen) editor.root.dataset.state = 'open';
+    if (focus) editor.input.focus({ preventScroll: true });
+    syncNoteLabels();
+  }
+
+  function scheduleNoteClose() {
+    clearTimeout(noteCloseTimer);
+    noteCloseTimer = setTimeout(() => {
+      const editor = noteEditor;
+      if (!editor?.open) return;
+      if (editor.pinned || editor.hovered || editor.root.contains(document.activeElement)) return;
+      closeNote();
+    }, NOTE_CLOSE_DELAY);
+  }
+
+  function closeNote(refocus = false) {
+    const editor = noteEditor;
+    if (!editor?.open) return;
+    clearTimeout(editor.timer);
+    if (editor.dirty) saveNote(editor);
+    const trigger = editor.anchor;
+    editor.open = false;
+    editor.pinned = false;
+    editor.root.hidden = true;
+    editor.root.removeAttribute('data-state');
+    if (trigger) trigger.setAttribute('aria-expanded', 'false');
+    // Returning focus to the icon must not count as a fresh hover/focus open.
+    if (refocus && trigger) {
+      noteSuppressFocus = true;
+      trigger.focus({ preventScroll: true });
+      noteSuppressFocus = false;
+    }
+    syncNoteLabels();
+  }
+
+  async function saveNote(editor = noteEditor) {
+    if (!editor?.open && !editor) return;
+    if (!editor.dirty || editor.saving || !notesReady()) return;
+    const groupId = editor.groupId, text = editor.input.value;
+    editor.dirty = false; editor.saving = true;
+    setNoteStatus(editor, '保存中…');
+    const started = epoch;
+    try {
+      const value = await api(`/api/groups/${groupId}/note`, { method: 'PUT', body: { note: text } });
+      if (started !== epoch) return;
+      editor.saved = text;
+      applyState(value);
+      // The group may have been renamed or removed by another tab meanwhile.
+      const latest = noteGroup(groupId);
+      if (latest) editor.title.textContent = `便签 · ${latest.name}`;
+      if (editor.input.value === text) setNoteStatus(editor, '已保存');
+    } catch (error) {
+      if (error instanceof StaleRequest || started !== epoch) return;
+      editor.dirty = editor.input.value !== editor.saved;
+      setNoteStatus(editor, `保存失败：${error.message}`.slice(0, 120));
+    } finally {
+      if (editor === noteEditor) editor.saving = false;
+    }
+  }
+
+  function syncNoteAnchor() {
+    const editor = noteEditor;
+    if (!editor?.open) return;
+    const group = noteGroup(editor.groupId);
+    const trigger = group && [...$('model-list').querySelectorAll('[data-note-key]')].find(node => node.dataset.noteKey === editor.groupId);
+    if (!group || !trigger) { closeNote(); return; }
+    editor.anchor = trigger;
+    trigger.setAttribute('aria-expanded', 'true');
+    editor.title.textContent = `便签 · ${group.name}`;
+    syncNoteLabels();
+    // A save from another tab wins only when this editor has nothing pending.
+    if (!editor.dirty && !editor.saving && editor.input.value !== (group.note || '')) {
+      editor.saved = group.note || '';
+      editor.input.value = editor.saved;
+      setNoteStatus(editor, editor.saved ? '已保存' : '');
+    }
+    placeNote(editor);
   }
 
   function renderGroups() {
@@ -574,11 +825,40 @@
         saveCollapsedGroups();
         toggle.setAttribute('aria-expanded', String(!content.hidden));
         toggle.setAttribute('aria-label', `${content.hidden ? '展开' : '收起'} ${group.name}`);
+        if (content.hidden && noteEditor?.open && noteEditor.groupId === group.id) closeNote();
       }, 'icon-button model-group-toggle');
       toggle.setAttribute('aria-expanded', String(!content.hidden));
       toggle.setAttribute('aria-label', `${content.hidden ? '展开' : '收起'} ${group.name}`);
       toggle.setAttribute('aria-controls', content.id);
-      header.append(icon, node('h2', group.name), node('span', `${models.length} 个模型`, 'model-group-count'), groupArchiveButton(group), toggle);
+      header.append(icon, node('h2', group.name));
+      if (noteIconVisible(group)) header.append(noteTrigger(group));
+      header.append(node('span', `${models.length} 个模型`, 'model-group-count'));
+      // The entry is a switch over the icon: it either puts the icon on the
+      // header and opens the card, or removes the icon and closes the card.
+      const openNoteItem = button('打开便签', () => {
+        if (!notesReady()) return;
+        if (noteIconVisible(group)) {
+          if (noteEditor?.open && noteEditor.groupId === group.id) closeNote();
+          noteVisibility.set(group.id, 'hidden');
+          saveNoteVisibility();
+          renderModels();
+          // The icon this click came from is gone; land focus on what stays.
+          document.querySelector(`.group-menu[data-note-group="${group.id}"] > summary`)?.focus({ preventScroll: true });
+          return;
+        }
+        noteVisibility.set(group.id, 'shown');
+        saveNoteVisibility();
+        renderModels();
+        const trigger = [...$('model-list').querySelectorAll('[data-note-key]')].find(item => item.dataset.noteKey === group.id);
+        if (trigger) openNote(group.id, trigger, { pinned: true, focus: true });
+      }, 'button subtle small-button group-note-action');
+      openNoteItem.dataset.noteGroup = group.id;
+      openNoteItem.disabled = !notesReady();
+      openNoteItem.title = notesReady() ? (group.note ? '编辑这个分组的便签' : '为这个分组添加便签') : '后台版本较旧，请重启 adroute 后再使用便签';
+      const groupMenu = actionMenu([openNoteItem, groupArchiveButton(group)], '更多', `分组操作 ${group.name}`);
+      groupMenu.classList.add('group-menu');
+      groupMenu.dataset.noteGroup = group.id;
+      header.append(groupMenu, toggle);
       if (group.archived) header.append(badge('分组已归档', 'badge muted-badge'));
       card.append(header, content);
       for (const model of models) content.append(modelRow(model));
@@ -589,6 +869,8 @@
     renderDefaultSelect();
     renderBulkExposure();
     syncPendingControls();
+    syncNoteLabels();
+    syncNoteAnchor();
   }
 
   // The page-level switch mirrors the page it sits on: models on the model page,
@@ -1445,7 +1727,7 @@
     $('auth-submit').disabled = true;
     try {
       const value = await api('/api/state');
-      loadCollapsedGroups();
+      loadCollapsedGroups(); loadNoteVisibility();
       remember(token); $('admin-token').value = '';
       $('auth-screen').hidden = true; $('app-shell').hidden = false;
       applyState(value); await loadSetup(); renderAccess();
@@ -1463,6 +1745,8 @@
   }
   document.addEventListener('click', event => {
     for (const menu of document.querySelectorAll('.action-menu[open]')) if (!menu.contains(event.target)) menu.open = false;
+    // 更多 belongs to the same group, so opening it must not drop a pinned memo.
+    if (noteEditor?.open && !noteEditor.root.contains(event.target) && !event.target.closest('[data-note-key]') && !event.target.closest(`.group-menu[data-note-group="${noteEditor.groupId}"]`)) closeNote();
   });
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape') {

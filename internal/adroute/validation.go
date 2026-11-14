@@ -26,6 +26,9 @@ const (
 	MaxModels          = 2000
 	MaxAggregates      = 64
 	MaxAggregateSize   = 8
+	// MaxGroupNote bounds a group memo in characters, not bytes, so a note
+	// written in Chinese keeps the same budget as one in English.
+	MaxGroupNote = 1000
 	DefaultMaxRounds   = 5
 	MaxAggregateRounds = 10
 
@@ -81,6 +84,9 @@ func ValidateState(s State) error {
 	for _, g := range s.Groups {
 		if !identityRE.MatchString(g.ID) || ids[g.ID] || !validGroupName(g.Name) || groupNames[g.Name] {
 			return fmt.Errorf("invalid model group")
+		}
+		if !validGroupNote(g.Note) {
+			return fmt.Errorf("invalid group note")
 		}
 		ids[g.ID] = true
 		groupNames[g.Name] = true
@@ -176,6 +182,25 @@ func ValidateState(s State) error {
 
 func validGroupName(s string) bool {
 	return len(s) <= MaxGroupNameLength && groupNameRE.MatchString(s)
+}
+
+// validGroupNote accepts free-form memo text. Length is counted in characters
+// so Chinese notes get the same budget as ASCII ones; tabs and line breaks are
+// kept verbatim, while other control characters are rejected because they
+// cannot be displayed and only make the value hard to reason about.
+func validGroupNote(s string) bool {
+	if utf16Length(s) > MaxGroupNote {
+		return false
+	}
+	for _, r := range s {
+		if r == '\n' || r == '\r' || r == '\t' {
+			continue
+		}
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func validModelName(s string) bool {

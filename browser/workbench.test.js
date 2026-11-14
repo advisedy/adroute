@@ -49,13 +49,14 @@ test('favorites span groups, survive reload and archive without changing exposur
 
 test('group archives inherit without overwriting individual archives, search includes archives explicitly', {timeout:90000},async t=>{
  const f=await goBrowserFixture(t,{initialState:seedState()});const other=await goSavedModel(f,{group:'seed',name:'spare',model:'vendor/special'});await f.login();
+ const groupMenu=async name=>{const card=f.page.locator('.model-group').filter({has:f.page.getByRole('heading',{name,exact:true})});const menu=card.locator('.model-group-header .action-menu');if(!(await menu.evaluate(el=>el.open)))await menu.locator('summary').click();return menu.locator('.action-menu-items');};
  await more(row(f.page,other.id));await row(f.page,other.id).getByRole('button',{name:'归档',exact:true}).click();
- const group=f.page.locator('.model-group');await group.getByRole('button',{name:'归档分组',exact:true}).click();await expect(f.page.locator('.model-row[data-model-id]')).toHaveCount(0);
+ await (await groupMenu('seed')).getByRole('button',{name:'归档分组',exact:true}).click();await expect(f.page.locator('.model-row[data-model-id]')).toHaveCount(0);
  await f.page.locator('#model-search').fill('vendor/special');await expect(row(f.page,other.id)).toHaveCount(0);
  await f.page.locator('#model-include-archived').check();await expect(row(f.page,other.id)).toBeVisible();
  await f.page.locator('#model-search').fill('seed');await expect(f.page.locator('.model-row[data-model-id]')).toHaveCount(2);
  await f.page.locator('#model-include-archived').uncheck();await f.page.locator('#model-search').fill('');await view(f.page,'已归档').click();
- await f.page.locator('.model-group').getByRole('button',{name:'恢复分组',exact:true}).click();
+ await (await groupMenu('seed')).getByRole('button',{name:'恢复分组',exact:true}).click();
  await expect(row(f.page,other.id)).toBeVisible();await expect(row(f.page,'seed-model')).toHaveCount(0);
  await view(f.page,'全部').click();await expect(row(f.page,'seed-model')).toBeVisible();await expect(row(f.page,other.id)).toHaveCount(0);
  assert.equal((await f.state()).models.find(m=>m.id===other.id).archived,true);
@@ -134,7 +135,9 @@ test('missing organization capability disables metadata writes without blocking 
  await f.page.route('**/organization',async route=>{writes++;await route.continue();});await f.login();
  const favorite=row(f.page,'seed-model').getByRole('button',{name:'收藏',exact:true});await expect(favorite).toBeDisabled();
  await favorite.evaluate(el=>el.click());assert.equal(writes,0);await expect(row(f.page,'seed-model').getByRole('button',{name:'编辑',exact:true})).toBeEnabled();
- await expect(f.page.getByRole('button',{name:'归档分组',exact:true})).toBeDisabled();
+ const groupMenu=f.page.locator('.model-group-header .action-menu');
+ await groupMenu.locator('summary').click();
+ await expect(groupMenu.getByRole('button',{name:'归档分组',exact:true})).toBeDisabled();
 });
 
 test('search crosses favorites and group selection then restores both when cleared',{timeout:60000},async t=>{

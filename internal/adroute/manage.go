@@ -69,6 +69,31 @@ func (s *Store) RenameGroup(id string, in GroupInput) error {
 	})
 }
 
+// SetGroupNote replaces one group's memo. Clearing is a normal write, so the
+// group keeps existing and the revision still advances; only an unknown group
+// or invalid text is rejected, leaving the stored note untouched.
+func (s *Store) SetGroupNote(id, note string) error {
+	if !validGroupNote(note) {
+		return appError("便签不能超过 1000 个字符，也不能包含不可见控制字符。", 400, "GROUP_NOTE_INVALID")
+	}
+	// A repeated save must not bump the revision: autosave retries and duplicate
+	// submits would otherwise re-render the workbench for nothing.
+	_, err := s.mutateChanged(func(st *State) (bool, error) {
+		for i := range st.Groups {
+			if st.Groups[i].ID != id {
+				continue
+			}
+			if st.Groups[i].Note == note {
+				return false, nil
+			}
+			st.Groups[i].Note = note
+			return true, nil
+		}
+		return false, appError("模型组不存在。", 404, "GROUP_NOT_FOUND")
+	})
+	return err
+}
+
 func (s *Store) DeleteGroup(id string) error {
 	return s.mutate(func(st *State) error {
 		index := -1

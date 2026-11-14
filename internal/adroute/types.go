@@ -65,11 +65,13 @@ func (s *State) UnmarshalJSON(data []byte) error {
 }
 
 // Group is a user-created classification. It owns no URL, credential, or
-// upstream identity.
+// upstream identity. Note is a free-form memo about the provider behind the
+// group; it renders in the workbench but never reaches the proxy.
 type Group struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
 	Archived bool   `json:"archived,omitempty"`
+	Note     string `json:"note,omitempty"`
 }
 
 func (v *Group) UnmarshalJSON(b []byte) error {
@@ -77,6 +79,15 @@ func (v *Group) UnmarshalJSON(b []byte) error {
 	var x plain
 	if e := decodeStrict(b, &x); e != nil {
 		return e
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(b, &fields); err != nil {
+		return err
+	}
+	// A null note would silently decode to "", which reads as an intentional
+	// clear; reject it so a malformed config cannot erase a memo.
+	if raw, ok := fields["note"]; ok && string(raw) == "null" {
+		return fmt.Errorf("note must be a string")
 	}
 	*v = Group(x)
 	return validateOrganizationJSON(b)
@@ -147,6 +158,34 @@ func (v *GroupInput) UnmarshalJSON(b []byte) error {
 		return e
 	}
 	*v = GroupInput(x)
+	return nil
+}
+
+// GroupNoteInput replaces a group's memo. The empty string clears it, which is
+// why the field is required rather than optional: an omitted field would be
+// indistinguishable from an intentional clear.
+type GroupNoteInput struct {
+	Note string `json:"note"`
+}
+
+func (v *GroupNoteInput) UnmarshalJSON(b []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(b, &fields); err != nil {
+		return err
+	}
+	raw, ok := fields["note"]
+	if !ok {
+		return fmt.Errorf("note is required")
+	}
+	if string(raw) == "null" {
+		return fmt.Errorf("note must be a string")
+	}
+	type plain GroupNoteInput
+	var x plain
+	if e := decodeStrict(b, &x); e != nil {
+		return e
+	}
+	*v = GroupNoteInput(x)
 	return nil
 }
 

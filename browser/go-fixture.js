@@ -8,7 +8,7 @@ import { chromium, expect } from '@playwright/test';
 
 const root = resolve(new URL('..', import.meta.url).pathname);
 
-export async function goBrowserFixture(t, { viewport = { width: 1440, height: 1000 }, initialState } = {}) {
+export async function goBrowserFixture(t, { viewport = { width: 1440, height: 1000 }, initialState, hasTouch = false } = {}) {
   const temp = await mkdtemp(join(tmpdir(), 'adroute-go-browser-'));
   const bin = join(temp, 'adroute');
   execFileSync('go', ['build', '-o', bin, './cmd/adroute'], { cwd: root, stdio: 'pipe' });
@@ -35,7 +35,7 @@ export async function goBrowserFixture(t, { viewport = { width: 1440, height: 10
   }
   assert.ok(url, `Go binary did not become ready. stdout=${output} stderr=${errors}`);
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport });
+  const context = await browser.newContext({ viewport, hasTouch });
   const page = await context.newPage(); page.setDefaultTimeout(8000);
   const pageErrors = []; page.on('pageerror', e => pageErrors.push(e.message));
   await page.route('**/*', r => ['127.0.0.1', 'localhost'].includes(new URL(r.request().url()).hostname) ? r.continue() : r.abort());

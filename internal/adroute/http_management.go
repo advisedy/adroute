@@ -27,7 +27,7 @@ func (a *HTTPApp) stateJSON() map[string]any {
 				open++
 			}
 		}
-		groups = append(groups, map[string]any{"id": g.ID, "name": g.Name, "archived": g.Archived, "modelCount": total, "openCount": open})
+		groups = append(groups, map[string]any{"id": g.ID, "name": g.Name, "archived": g.Archived, "note": g.Note, "modelCount": total, "openCount": open})
 	}
 	models := []map[string]any{}
 	for _, m := range st.Models {
@@ -76,6 +76,7 @@ func (a *HTTPApp) stateJSON() map[string]any {
 			"modelExposure":      true,
 			"exposureBulk":       true,
 			"organization":       true,
+			"groupNotes":         true,
 			"modelCopy":          true,
 			"configTransfer":     true,
 			"quickTest":          true,
@@ -187,6 +188,7 @@ var managementRoutes = []managementRoute{
 	{http.MethodGet, "api/setup", (*managementReq).getSetup},
 	{http.MethodPost, "api/groups", (*managementReq).createGroup},
 	{http.MethodPut, "api/groups/*", (*managementReq).updateGroup},
+	{http.MethodPut, "api/groups/*/note", (*managementReq).updateGroupNote},
 	{http.MethodDelete, "api/groups/*", (*managementReq).deleteGroup},
 	{http.MethodPost, "api/aggregates", (*managementReq).createAggregate},
 	{http.MethodPut, "api/aggregates/*", (*managementReq).updateAggregate},
@@ -403,6 +405,18 @@ func (m *managementReq) updateGroup(id string) {
 		return
 	}
 	if e := m.store.RenameGroup(id, v); e != nil {
+		m.app.fail(m.w, e)
+	} else {
+		m.writeState(200)
+	}
+}
+
+func (m *managementReq) updateGroupNote(id string) {
+	var v GroupNoteInput
+	if !m.decode(64<<10, &v) {
+		return
+	}
+	if e := m.store.SetGroupNote(id, v.Note); e != nil {
 		m.app.fail(m.w, e)
 	} else {
 		m.writeState(200)
