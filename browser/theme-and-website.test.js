@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { expect } from '@playwright/test';
 import { goBrowserFixture, goSavedGroup, goSavedModel } from './go-fixture.js';
+import { textContrast } from './color-contrast.js';
 
 const row = (page, id) => page.locator(`.model-row[data-model-id="${id}"]`);
 
@@ -52,15 +53,20 @@ test('theme toggle switches to a persisted light appearance and back', { timeout
   assert.equal(await root.getAttribute('data-theme'), 'light');
   const lightBackground = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
   assert.notEqual(lightBackground, darkBackground, 'background must change with the theme');
-  assert.equal(lightBackground, 'rgb(246, 246, 248)');
+  const lightLuminance = await page.evaluate(() => {
+    const rgb = getComputedStyle(document.body).backgroundColor.match(/\d+/g).map(Number);
+    return rgb.slice(0, 3).reduce((sum, value) => sum + value, 0) / 3;
+  });
+  assert.ok(lightLuminance > 230, 'light mode must actually use a light canvas');
 
   // Text stays readable: foreground and background must not collapse together.
   const contrast = await page.evaluate(() => {
     const body = getComputedStyle(document.body);
     return { text: body.color, bg: body.backgroundColor, panel: getComputedStyle(document.querySelector('.panel')).backgroundColor };
   });
-  assert.equal(contrast.text, 'rgb(23, 23, 28)');
-  assert.equal(contrast.panel, 'rgb(255, 255, 255)');
+  assert.ok(await textContrast(page.locator('body')) >= 4.5, 'foreground stays readable against the canvas');
+  assert.ok(await textContrast(page.locator('.panel').first()) >= 4.5, 'foreground stays readable against panels');
+  assert.notEqual(contrast.panel, contrast.bg, 'panels retain a distinct surface');
 
   // The choice survives a reload and is applied before first paint.
   await page.reload();

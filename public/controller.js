@@ -1430,7 +1430,7 @@
       toggle.setAttribute('aria-pressed', String(light));
       toggle.title = light ? '切换到深色外观' : '切换到浅色外观';
     }
-    $('theme-color-meta')?.setAttribute('content', light ? '#f6f6f8' : '#111216');
+    $('theme-color-meta')?.setAttribute('content', light ? '#f6f8fb' : '#151f2c');
     try { localStorage.setItem(THEME_KEY, light ? 'light' : 'dark'); } catch { /* storage may be blocked */ }
   }
 

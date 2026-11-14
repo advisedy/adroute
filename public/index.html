@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
-  <meta name="theme-color" id="theme-color-meta" content="#111216">
+  <meta name="theme-color" id="theme-color-meta" content="#151f2c">
   <title>AdRoute · 模型管理</title>
   <link rel="stylesheet" href="/styles.css">
   <script src="/theme.js"></script>
@@ -52,7 +52,7 @@
         <div class="topbar-actions"><span id="connection-status" class="connection-status" role="status"><span class="status-dot pending"></span>正在连接</span><button id="theme-toggle" class="button subtle small-button" type="button" data-theme-toggle aria-pressed="false" title="切换深色 / 浅色外观">浅色模式</button><button id="refresh-button" class="button subtle small-button" type="button">刷新状态</button></div>
       </header>
       <main id="main" tabindex="-1">
-        <div class="page-heading"><div><p class="eyebrow">YOUR MODELS. YOUR ROUTE.</p><h1 id="page-title">模型管理</h1><p id="page-description" class="muted">添加模型，保存它们自己的上游地址与密钥，通过统一的本地地址调用。</p></div><span class="heading-label">本地控制台</span></div>
+        <div class="page-heading"><div><p class="eyebrow">本地控制台</p><h1 id="page-title">模型管理</h1><p id="page-description" class="muted">添加模型，保存它们自己的上游地址与密钥，通过统一的本地地址调用。</p></div><span class="heading-label">本地控制台</span></div>
         <div id="global-error" class="notice error-notice" role="alert" hidden></div>
         <div id="catalog-notice" class="notice warning-notice" role="status" hidden>
           <p id="catalog-message"></p>
@@ -65,9 +65,9 @@
         <section id="models-panel" class="tab-panel" aria-label="模型管理" hidden>
           <div class="workbench-heading"><h2>模型目录 <span id="model-count" class="count-badge">0</span></h2><div class="toolbar-actions">
             <details class="action-menu"><summary>管理与备份</summary><div class="action-menu-items">
-              <button id="manage-groups" class="button subtle small-button" type="button">管理组</button>
-              <button id="import-config" class="button subtle small-button" type="button">导入配置</button>
-              <button id="export-config" class="button subtle small-button" type="button" title="导出文件包含明文上游 API Key，请妥善保管">导出配置</button>
+              <button id="manage-groups" class="button subtle small-button" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3Z"/></svg>管理组</button>
+              <button id="import-config" class="button subtle small-button" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 15v5h16v-5"/></svg>导入配置</button>
+              <button id="export-config" class="button subtle small-button" type="button" title="导出文件包含明文上游 API Key，请妥善保管"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3m-4 4 4-4 4 4M4 15v5h16v-5"/></svg>导出配置</button>
             </div></details>
             <button id="add-model" class="button primary" type="button"><span aria-hidden="true">＋</span> 添加模型</button>
             <input id="import-config-file" type="file" accept=".json,application/json" hidden>
