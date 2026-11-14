@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
-  <meta name="theme-color" id="theme-color-meta" content="#0a0a0a">
+  <meta name="theme-color" id="theme-color-meta" content="#111216">
   <title>AdRoute · 模型管理</title>
   <link rel="stylesheet" href="/styles.css">
   <script src="/theme.js"></script>
@@ -36,13 +36,13 @@
       <a class="brand" href="#" id="brand-home" aria-label="AdRoute 模型管理首页"><span class="brand-mark small" aria-hidden="true">a<span>↗</span></span><span>AdRoute<small>本地模型代理</small></span></a>
       <p class="nav-label">工作空间</p>
       <nav class="navigation">
-        <button class="nav-item selected" type="button" data-tab="models" aria-current="page"><span class="nav-icon" aria-hidden="true">▦</span>模型管理</button>
-        <button class="nav-item" type="button" data-tab="aggregates"><span class="nav-icon" aria-hidden="true">⛓</span>聚合</button>
-        <button class="nav-item" type="button" data-tab="requests"><span class="nav-icon" aria-hidden="true">≋</span>请求记录</button>
-        <button class="nav-item" type="button" data-tab="compatibility"><span class="nav-icon" aria-hidden="true">⇄</span>兼容修复</button>
-        <button class="nav-item" type="button" data-tab="setup"><span class="nav-icon code-icon" aria-hidden="true">&gt;_</span>客户端接入</button>
+        <button class="nav-item selected" type="button" data-tab="models" aria-current="page"><svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>模型管理</button>
+        <button class="nav-item" type="button" data-tab="aggregates"><svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="8" width="6" height="8" rx="2"/><rect x="15" y="8" width="6" height="8" rx="2"/><path d="M9 12h6m-3-3 3 3-3 3"/></svg>聚合</button>
+        <button class="nav-item" type="button" data-tab="requests"><svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h8M4 6h.01M4 12h.01M4 18h.01"/></svg>请求记录</button>
+        <button class="nav-item" type="button" data-tab="compatibility"><svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m14 6 4-4 4 4M18 2v13a4 4 0 0 1-4 4h-3M10 18l-4 4-4-4M6 22V9a4 4 0 0 1 4-4h3"/></svg>兼容修复</button>
+        <button class="nav-item" type="button" data-tab="setup"><svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="m6 9 3 3-3 3m7 0h5"/></svg>客户端接入</button>
       </nav>
-      <div class="sidebar-note"><span class="tiny-label">唯一对外身份</span><p><code>adroute/&lt;组名&gt;/&lt;模型名称&gt;</code></p><span class="local-badge"><span class="status-dot"></span> LOCAL FIRST</span></div>
+      <div class="sidebar-note"><span class="local-badge"><span class="status-dot"></span> 本地工作空间</span><p>你的模型，统一的调用入口。</p><code>adroute/组名/模型名称</code></div>
       <div class="sidebar-bottom"><span id="app-version">AdRoute</span><button id="logout-button" class="text-button" type="button">退出</button></div>
     </aside>
 
@@ -63,7 +63,7 @@
         <div id="state-unavailable" class="empty-panel" hidden><span class="empty-icon" aria-hidden="true">↻</span><h2>暂时无法读取服务状态</h2><p class="muted">请确认本地服务正在运行，然后重试。</p><button id="retry-state" class="button secondary" type="button">重新连接</button></div>
 
         <section id="models-panel" class="tab-panel" aria-label="模型管理" hidden>
-          <div class="workbench-heading"><h2>模型 <span id="model-count" class="count-badge">0</span></h2><div class="toolbar-actions">
+          <div class="workbench-heading"><h2>模型目录 <span id="model-count" class="count-badge">0</span></h2><div class="toolbar-actions">
             <details class="action-menu"><summary>管理与备份</summary><div class="action-menu-items">
               <button id="manage-groups" class="button subtle small-button" type="button">管理组</button>
               <button id="import-config" class="button subtle small-button" type="button">导入配置</button>
@@ -72,7 +72,8 @@
             <button id="add-model" class="button primary" type="button"><span aria-hidden="true">＋</span> 添加模型</button>
             <input id="import-config-file" type="file" accept=".json,application/json" hidden>
           </div></div>
-          <div class="collection-tabs" role="group" aria-label="模型收纳视图">
+          <div class="workbench-tools">
+            <div class="collection-tabs" role="group" aria-label="模型收纳视图">
             <button type="button" data-collection="favorites" data-kind="models">常用</button><button type="button" data-collection="all" data-kind="models">全部</button><button type="button" data-collection="archived" data-kind="models">已归档</button>
           </div>
           <div class="workbench-search">
@@ -81,7 +82,9 @@
             <label class="sr-only" for="model-exposure-filter">对外权限</label><select id="model-exposure-filter"><option value="all">全部权限</option><option value="open">对外开放</option><option value="closed">对外关闭 / 停用</option></select>
             <label class="checkbox-label archive-search"><input id="model-include-archived" type="checkbox"><span>包含归档</span></label>
           </div>
-          <p class="field-help workbench-hint">收藏跨分组显示；归档仅收起列表，不改变权限、默认选择或聚合成员。</p>
+          <details class="workbench-help"><summary>关于收藏与归档</summary><p class="field-help">收藏跨分组显示；归档仅收起列表，不改变权限、默认选择或聚合成员。</p></details>
+          </div>
+          <div class="routing-settings">
           <div class="default-bar panel">
             <div class="default-field">
               <label for="default-model">默认路由</label>
@@ -96,6 +99,7 @@
               <span class="bulk-exposure-title">全部模型 · 对外开放</span>
             </label>
             <p class="field-help" id="model-exposure-all-status">正在读取…</p>
+          </div>
           </div>
 
           <div id="model-list" class="model-list"></div>
@@ -307,7 +311,7 @@
 
   <dialog id="request-dialog" class="dialog wide-dialog" aria-labelledby="request-title"><div class="dialog-heading"><div><p class="eyebrow">REQUEST DETAIL</p><h2 id="request-title">请求详情</h2></div><button class="icon-button" type="button" data-close-dialog="request-dialog" aria-label="关闭请求详情">×</button></div><div class="dialog-body"><dl class="request-meta"><dt>时间</dt><dd id="request-meta-time"></dd><dt>模型组</dt><dd id="request-meta-group"></dd><dt>对外 ID</dt><dd id="request-meta-route" class="mono"></dd><dt>真实模型 ID</dt><dd id="request-meta-model" class="mono"></dd><dt>档位</dt><dd id="request-meta-effort"></dd><dt>状态</dt><dd id="request-meta-status"></dd><dt>耗时</dt><dd id="request-meta-duration"></dd></dl><pre id="request-detail-body" class="request-detail-pre" tabindex="0"></pre></div><div class="dialog-footer end"><button class="button secondary" type="button" data-close-dialog="request-dialog">关闭</button></div></dialog>
 
-  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden><svg class="toast-icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 10v6m0-9h.01"/></svg><span id="toast-message"></span><button id="toast-close" class="icon-button" type="button" aria-label="关闭提示">×</button></div>
   <noscript><div class="noscript-message">AdRoute 控制台需要启用 JavaScript。请启用后刷新页面。</div></noscript>
 </body>
 </html>

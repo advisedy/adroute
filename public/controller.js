@@ -40,7 +40,7 @@
 
   const BACKEND_UPDATE = '后台仍在运行旧版本，请先执行 adroute stop && adroute start，再刷新网页；已暂停配置修改。';
   const titles = {
-    models: ['模型工作台', '常用的留在眼前，备用的安心收起。'],
+    models: ['模型工作台', '管理模型与路由，让每一次调用都有清晰的去向。'],
     aggregates: ['聚合', '把多个模型串成故障转移链；某个成员不可用时自动换下一个。'],
     requests: ['请求记录', '查看最近的路由结果，不保存对话正文。'],
     compatibility: ['兼容修复', '每个已保存模型条目独立绑定修复包，不继承组或其他模型设置。'],
@@ -68,7 +68,11 @@
   function quickTestReady() { return backendReady() && state?.capabilities?.quickTest === true; }
   function aggregatesReady() { return backendReady() && state?.capabilities?.aggregates === true; }
   function remember(value) { try { if (value) sessionStorage.setItem(SESSION, value); else sessionStorage.removeItem(SESSION); } catch { /* tabs may block storage */ } }
-  function toast(value) { clearTimeout(toastTimer); notice('toast', value); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 4500); }
+  function toast(value) {
+    clearTimeout(toastTimer);
+    text('toast-message', value); $('toast').hidden = false;
+    toastTimer = setTimeout(() => { $('toast').hidden = true; }, 4500);
+  }
   // This identity stays private in memory; it is never rendered or persisted.
   function modelSignature(model) { return JSON.stringify([model.groupId, model.groupName, model.name, model.model, model.baseUrl, model.apiKey, model.profile, model.contextWindow]); }
   function modelWriteKey() { return editingModel ? `model:${editingModel.id}` : `new-model:${formVersion}`; }
@@ -1426,7 +1430,7 @@
       toggle.setAttribute('aria-pressed', String(light));
       toggle.title = light ? '切换到深色外观' : '切换到浅色外观';
     }
-    $('theme-color-meta')?.setAttribute('content', light ? '#f6f6f8' : '#0a0a0a');
+    $('theme-color-meta')?.setAttribute('content', light ? '#f6f6f8' : '#111216');
     try { localStorage.setItem(THEME_KEY, light ? 'light' : 'dark'); } catch { /* storage may be blocked */ }
   }
 
@@ -1461,9 +1465,23 @@
     for (const menu of document.querySelectorAll('.action-menu[open]')) if (!menu.contains(event.target)) menu.open = false;
   });
   document.addEventListener('keydown', event => {
-    if (event.key !== 'Escape') return;
-    for (const menu of document.querySelectorAll('.action-menu[open]')) { menu.open = false; menu.querySelector('summary').focus(); }
+    if (event.key === 'Escape') {
+      for (const menu of document.querySelectorAll('.action-menu[open]')) { menu.open = false; menu.querySelector('summary').focus(); }
+      return;
+    }
+    const menu = event.target.closest('.action-menu');
+    if (!menu || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    const controls = [...menu.querySelectorAll('.action-menu-items button:not(:disabled)')];
+    if (!controls.length) return;
+    event.preventDefault();
+    for (const other of document.querySelectorAll('.action-menu[open]')) if (other !== menu) other.open = false;
+    menu.open = true;
+    const index = controls.indexOf(document.activeElement);
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? controls.length - 1
+      : event.key === 'ArrowDown' ? (index + 1) % controls.length : index < 0 ? controls.length - 1 : (index - 1 + controls.length) % controls.length;
+    controls[next].focus();
   });
+  $('toast-close').addEventListener('click', () => { clearTimeout(toastTimer); $('toast').hidden = true; });
 
   $('logout-button').addEventListener('click', () => clearSession());
   applyTheme(currentTheme());
