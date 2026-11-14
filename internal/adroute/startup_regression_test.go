@@ -70,11 +70,3 @@ func TestLoadTokensIsIndependentAndNeverCreatesMissingTokenFile(t *testing.T) {
 		t.Fatalf("token file was created: %v", err)
 	}
 }
-
-func mustHTTPApp(o HTTPOptions) *HTTPApp {
-	a, err := NewHTTPApp(o)
-	if err != nil {
-		panic(err)
-	}
-	return a
-}

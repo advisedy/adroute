@@ -245,8 +245,8 @@ npm test
 ## 架构与功能说明
 
 - [Go 架构与代码地图](architecture.md)：入口、服务生命周期、HTTP、Store、代理、兼容性、Codex 与 OpenCode。
-- [复杂度与简化建议](complexity-review.md)：哪些复杂性有必要，哪些外围能力值得收窄。
 - [模型组、模型条目与管理 API](api-services.md)
-- [模型管理独立审查修复](model-management-review-fixes.md)：测速、异步状态、目录同步与严格输入的修复和验证。
 - [Responses 兼容包和诊断](compatibility.md)
 - [OpenCode 同步与文件安全](opencode-sync.md)
+
+历史开发记录（重构执行 Prompt、实现报告、审查修复、复杂度评审）收在 [docs/history](history/)，只用于追溯当时的决策，不代表当前状态。

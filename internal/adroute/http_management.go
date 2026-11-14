@@ -101,425 +101,517 @@ func (a *HTTPApp) upstreams() *Upstreams {
 	return NewUpstreams(a.opts.Client, a.opts.Port)
 }
 
+// managementReq is one management API request with its path already parsed.
+// Handlers take it instead of closing over a 400-line function, so each route
+// can be read and tested on its own.
+type managementReq struct {
+	app   *HTTPApp
+	w     http.ResponseWriter
+	r     *http.Request
+	path  string
+	parts []string
+	store *Store
+}
+
+func (m *managementReq) writeState(status int) { m.app.json(m.w, status, m.app.stateJSON()) }
+
+// decode reads the body strictly: unknown fields, trailing content and (except
+// for api/default) explicit nulls are rejected.
+func (m *managementReq) decode(limit int64, v any) bool {
+	body, err := decodeBody(m.r, limit)
+	if err == nil {
+		if m.path == "api/default" {
+			err = strictManagementJSON(body, v, "modelId")
+		} else {
+			err = strictManagementJSON(body, v)
+		}
+	}
+	if err != nil {
+		m.app.fail(m.w, err)
+		return false
+	}
+	return true
+}
+
+// requireEmptyBody accepts only a blank body, for endpoints that take no input.
+func (m *managementReq) requireEmptyBody(rejection string) bool {
+	body, err := decodeBody(m.r, 64<<10)
+	if err != nil {
+		m.app.fail(m.w, err)
+		return false
+	}
+	if len(bytes.TrimSpace(body)) != 0 {
+		m.app.fail(m.w, appError(rejection, 400, "INVALID_REQUEST"))
+		return false
+	}
+	return true
+}
+
+// managementRoute binds one method and path pattern to a handler. A pattern
+// segment is a literal, "*" for one captured segment, or "a|b" for a choice of
+// literals. Routes are tried in order and the first match wins.
+type managementRoute struct {
+	method  string
+	pattern string
+	handle  func(*managementReq, string)
+}
+
+var managementRoutes = []managementRoute{
+	{http.MethodGet, "api/state", (*managementReq).getState},
+	{http.MethodPut, "api/models|aggregates/*/exposure", (*managementReq).setExposure},
+	{http.MethodPut, "api/models/*/params", (*managementReq).setModelParams},
+	{http.MethodPut, "api/groups|models|aggregates/*/organization", (*managementReq).setOrganization},
+	{http.MethodGet, "api/config/export", (*managementReq).exportConfig},
+	{http.MethodPost, "api/config/import", (*managementReq).importConfig},
+	{http.MethodPost, "api/catalog/retry", (*managementReq).retryCatalog},
+	{http.MethodGet, "api/setup", (*managementReq).getSetup},
+	{http.MethodPost, "api/groups", (*managementReq).createGroup},
+	{http.MethodPut, "api/groups/*", (*managementReq).updateGroup},
+	{http.MethodDelete, "api/groups/*", (*managementReq).deleteGroup},
+	{http.MethodPost, "api/aggregates", (*managementReq).createAggregate},
+	{http.MethodPut, "api/aggregates/*", (*managementReq).updateAggregate},
+	{http.MethodDelete, "api/aggregates/*", (*managementReq).deleteAggregate},
+	{http.MethodPut, "api/aggregates/*/availability", (*managementReq).setAggregateAvailability},
+	{http.MethodPost, "api/models/discover", (*managementReq).discoverModels},
+	{http.MethodPost, "api/models", (*managementReq).createModel},
+	{http.MethodPost, "api/models/*/copy", (*managementReq).copyModel},
+	{http.MethodPost, "api/models/*/discover", (*managementReq).discoverModel},
+	{http.MethodPut, "api/models/*", (*managementReq).updateModel},
+	{http.MethodDelete, "api/models/*", (*managementReq).deleteModel},
+	{http.MethodPut, "api/models/*/availability", (*managementReq).setModelAvailability},
+	{http.MethodPost, "api/models/*/quick-test", (*managementReq).quickTest},
+	{http.MethodPost, "api/models/*/tool-structure-test", (*managementReq).toolStructureTest},
+	{http.MethodPost, "api/default", (*managementReq).setDefault},
+	{http.MethodPost, "api/opencode/sync", (*managementReq).syncOpenCode},
+}
+
+// matchManagementPattern reports whether path fits pattern and returns the
+// segment captured by "*".
+func matchManagementPattern(pattern, path string) (string, bool) {
+	ps := strings.Split(pattern, "/")
+	xs := strings.Split(path, "/")
+	if len(ps) != len(xs) {
+		return "", false
+	}
+	captured := ""
+	for i, seg := range ps {
+		switch {
+		case seg == "*":
+			captured = xs[i]
+		case strings.Contains(seg, "|"):
+			matched := false
+			for _, alt := range strings.Split(seg, "|") {
+				if alt == xs[i] {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return "", false
+			}
+		case seg != xs[i]:
+			return "", false
+		}
+	}
+	return captured, true
+}
+
 func (a *HTTPApp) managementAPI(w http.ResponseWriter, r *http.Request) bool {
-	path := strings.Trim(r.URL.Path, "/")
-	s := a.opts.Store
-	parts := strings.Split(path, "/")
-	writeState := func(status int) { a.json(w, status, a.stateJSON()) }
-	decode := func(limit int64, v any) bool {
-		b, e := decodeBody(r, limit)
-		if e == nil {
-			if path == "api/default" {
-				e = strictManagementJSON(b, v, "modelId")
-			} else {
-				e = strictManagementJSON(b, v)
-			}
+	m := &managementReq{app: a, w: w, r: r, path: strings.Trim(r.URL.Path, "/"), store: a.opts.Store}
+	m.parts = strings.Split(m.path, "/")
+	if strings.HasPrefix(m.path, "api/clients") {
+		// The client endpoints decline paths they do not own, so a miss keeps
+		// falling through to the rest of the table.
+		if a.clientsAPI(w, r, m.path, m.parts) {
+			return true
 		}
-		if e != nil {
-			a.fail(w, e)
-			return false
+	}
+	for _, route := range managementRoutes {
+		if route.method != r.Method {
+			continue
 		}
+		arg, ok := matchManagementPattern(route.pattern, m.path)
+		if !ok {
+			continue
+		}
+		route.handle(m, arg)
 		return true
 	}
-	if path == "api/state" && r.Method == "GET" {
-		a.json(w, 200, a.stateJSON())
-		return true
-	}
-	if strings.HasPrefix(path, "api/clients") && a.clientsAPI(w, r, path, parts) {
-		return true
-	}
-	if len(parts) == 4 && parts[0] == "api" && (parts[1] == "models" || parts[1] == "aggregates") && parts[3] == "exposure" && r.Method == http.MethodPut {
-		var v struct {
-			Enabled *bool `json:"enabled"`
-		}
-		if !decode(64<<10, &v) {
-			return true
-		}
-		if v.Enabled == nil {
-			a.fail(w, appError("enabled must be a boolean", 400, "INVALID_REQUEST"))
-			return true
-		}
-		var err error
-		if parts[1] == "models" {
-			err = s.SetModelExposure(parts[2], *v.Enabled)
-		} else {
-			err = s.SetAggregateExposure(parts[2], *v.Enabled)
-		}
-		if err != nil {
-			a.fail(w, err)
-		} else {
-			writeState(200)
-		}
-		return true
-	}
-	if len(parts) == 4 && parts[0] == "api" && parts[1] == "models" && parts[3] == "params" && r.Method == http.MethodPut {
-		// A narrow endpoint on purpose: editing one published number must not
-		// require resending group, name, upstream id and credential, where one
-		// stale field would silently rewrite the entry.
-		var v struct {
-			ContextWindow *int `json:"contextWindow"`
-		}
-		if !decode(64<<10, &v) {
-			return true
-		}
-		if v.ContextWindow == nil {
-			a.fail(w, appError("contextWindow 必须是整数；传 0 表示不设置。", 400, "INVALID_REQUEST"))
-			return true
-		}
-		if e := s.SetModelContextWindow(parts[2], *v.ContextWindow); e != nil {
-			a.fail(w, e)
-		} else {
-			writeState(200)
-		}
-		return true
-	}
-	if len(parts) == 4 && parts[0] == "api" && (parts[1] == "groups" || parts[1] == "models" || parts[1] == "aggregates") && parts[3] == "organization" && r.Method == http.MethodPut {
-		var input OrganizationInput
-		if !decode(64<<10, &input) {
-			return true
-		}
-		if err := s.SetOrganization(parts[1], parts[2], input); err != nil {
-			a.fail(w, err)
-		} else {
-			writeState(200)
-		}
-		return true
-	}
-	if path == "api/config/export" && r.Method == http.MethodGet {
-		a.json(w, http.StatusOK, configBackup{Format: "adroute-config", Version: 1, Config: s.Snapshot()})
-		return true
-	}
-	if path == "api/config/import" && r.Method == http.MethodPost {
-		body, err := decodeBody(r, 128<<20)
-		var input configImport
-		if err == nil && decodeStrict(body, &input) != nil {
-			err = appError("配置文件格式错误，现有配置未改变。", 400, "INVALID_BACKUP")
-		}
-		if err == nil {
-			err = s.importConfig(input)
-		}
-		if err != nil {
-			a.fail(w, err)
-		} else {
-			writeState(http.StatusOK)
-		}
-		return true
-	}
-	if path == "api/catalog/retry" && r.Method == http.MethodPost {
-		body, e := decodeBody(r, 64<<10)
-		if e != nil {
-			a.fail(w, e)
-		} else if len(bytes.TrimSpace(body)) != 0 {
-			a.fail(w, appError("目录重试请求不接受参数。", 400, "INVALID_REQUEST"))
-		} else if e := s.RetryCatalogPublication(); e != nil {
-			a.fail(w, appError("配置仍已保存，但客户端目录发布失败。请检查目录文件及权限后重试。", 503, "CATALOG_PUBLICATION_FAILED"))
-		} else {
-			writeState(200)
-		}
-		return true
-	}
-	if path == "api/setup" && r.Method == "GET" {
-		tok := s.TokenPair().ProxyToken
-		base := fmt.Sprintf("http://127.0.0.1:%d/v1", a.opts.Port)
-		config := fmt.Sprintf("# adroute start 自动合并到 Codex 配置；此处为配置预览\nmodel_provider = \"adroute\"\nmodel = %q\nmodel_catalog_json = %q\n\n[model_providers.adroute]\nname = \"adroute\"\nbase_url = %q\nwire_api = \"responses\"\nexperimental_bearer_token = %q\nrequires_openai_auth = false\nsupports_websockets = false\n", DefaultRouteID, s.Paths().Catalog, base, tok)
-		a.json(w, 200, map[string]any{"proxyUrl": base, "proxyToken": tok, "codexConfig": config, "shellSetup": "adroute start\ncodex"})
-		return true
-	}
-	if path == "api/groups" && r.Method == "POST" {
-		var v GroupInput
-		if !decode(64<<10, &v) {
-			return true
-		}
-		if _, e := s.CreateGroup(v); e != nil {
-			a.fail(w, e)
-		} else {
-			writeState(201)
-		}
-		return true
-	}
-	if len(parts) == 3 && parts[0] == "api" && parts[1] == "groups" {
-		id := parts[2]
-		switch r.Method {
-		case http.MethodPut:
-			var v GroupInput
-			if !decode(64<<10, &v) {
-				return true
-			}
-			if e := s.RenameGroup(id, v); e != nil {
-				a.fail(w, e)
-			} else {
-				writeState(200)
-			}
-			return true
-		case http.MethodDelete:
-			if e := s.DeleteGroup(id); e != nil {
-				a.fail(w, e)
-			} else {
-				writeState(200)
-			}
-			return true
-		}
-	}
-	if path == "api/aggregates" && r.Method == "POST" {
-		var v AggregateInput
-		if !decode(64<<10, &v) {
-			return true
-		}
-		if _, e := s.CreateAggregate(v); e != nil {
-			a.fail(w, e)
-		} else {
-			writeState(201)
-		}
-		return true
-	}
-	if len(parts) == 3 && parts[0] == "api" && parts[1] == "aggregates" {
-		id := parts[2]
-		switch r.Method {
-		case http.MethodPut:
-			var v AggregateInput
-			if !decode(64<<10, &v) {
-				return true
-			}
-			if e := s.UpdateAggregate(id, v); e != nil {
-				a.fail(w, e)
-			} else {
-				writeState(200)
-			}
-			return true
-		case http.MethodDelete:
-			if e := s.DeleteAggregate(id); e != nil {
-				a.fail(w, e)
-			} else {
-				writeState(200)
-			}
-			return true
-		}
-	}
-	if len(parts) == 4 && parts[0] == "api" && parts[1] == "aggregates" && parts[3] == "availability" && r.Method == http.MethodPut {
-		var v struct {
-			Enabled *bool `json:"enabled"`
-		}
-		if !decode(64<<10, &v) {
-			return true
-		}
-		if v.Enabled == nil {
-			a.fail(w, appError("enabled must be a boolean", 400, "INVALID_REQUEST"))
-			return true
-		}
-		if e := s.SetAggregateEnabled(parts[2], *v.Enabled); e != nil {
-			a.fail(w, e)
-		} else {
-			writeState(200)
-		}
-		return true
-	}
-	if path == "api/models/discover" && r.Method == "POST" {
-		var v DiscoverInput
-		if !decode(64<<10, &v) {
-			return true
-		}
-		result, e := a.upstreams().Discover(r.Context(), v.BaseURL, v.APIKey, 30*time.Second)
-		if e != nil {
-			a.fail(w, e)
-		} else {
-			a.json(w, 200, result)
-		}
-		return true
-	}
-	if path == "api/models" && r.Method == "POST" {
-		var v ModelInput
-		if !decode(64<<10, &v) {
-			return true
-		}
-		if _, e := s.CreateModel(v); e != nil {
-			a.fail(w, e)
-		} else {
-			writeState(201)
-		}
-		return true
-	}
-	if len(parts) == 4 && parts[0] == "api" && parts[1] == "models" && parts[3] == "copy" && r.Method == http.MethodPost {
-		body, e := decodeBody(r, 64<<10)
-		if e != nil {
-			a.fail(w, e)
-		} else if len(bytes.TrimSpace(body)) != 0 {
-			a.fail(w, appError("复制请求不接受参数。", 400, "INVALID_REQUEST"))
-		} else if _, e := s.CopyModel(parts[2]); e != nil {
-			a.fail(w, e)
-		} else {
-			writeState(201)
-		}
-		return true
-	}
-	// Discovery for an existing model may reuse its saved credential while the
-	// form still allows a new (unsaved) base URL or credential to win.
-	if len(parts) == 4 && parts[0] == "api" && parts[1] == "models" && parts[3] == "discover" && r.Method == http.MethodPost {
-		var v struct {
-			BaseURL string `json:"baseUrl,omitempty"`
-			APIKey  string `json:"apiKey,omitempty"`
-		}
-		if !decode(64<<10, &v) {
-			return true
-		}
-		saved, e := s.ModelRoute(parts[2])
-		if e != nil {
-			a.fail(w, e)
-			return true
-		}
-		base := strings.TrimSpace(v.BaseURL)
-		if base == "" {
-			base = saved.BaseURL
-		}
-		key := strings.TrimSpace(v.APIKey)
-		if key == "" {
-			key = saved.APIKey
-		}
-		result, e := a.upstreams().Discover(r.Context(), base, key, 30*time.Second)
-		if e != nil {
-			a.fail(w, e)
-		} else {
-			a.json(w, 200, result)
-		}
-		return true
-	}
-	if len(parts) == 3 && parts[0] == "api" && parts[1] == "models" {
-		id := parts[2]
-		switch r.Method {
-		case http.MethodPut:
-			var v ModelInput
-			if !decode(64<<10, &v) {
-				return true
-			}
-			if e := s.UpdateModel(id, v); e != nil {
-				a.fail(w, e)
-			} else {
-				writeState(200)
-			}
-			return true
-		case http.MethodDelete:
-			if e := s.DeleteModel(id); e != nil {
-				a.fail(w, e)
-			} else {
-				writeState(200)
-			}
-			return true
-		}
-	}
-	if len(parts) == 4 && parts[0] == "api" && parts[1] == "models" && parts[3] == "availability" && r.Method == http.MethodPut {
-		var v struct {
-			Enabled *bool `json:"enabled"`
-		}
-		if !decode(64<<10, &v) {
-			return true
-		}
-		if v.Enabled == nil {
-			a.fail(w, appError("enabled must be a boolean", 400, "INVALID_REQUEST"))
-			return true
-		}
-		if e := s.SetModelEnabled(parts[2], *v.Enabled); e != nil {
-			a.fail(w, e)
-		} else {
-			writeState(200)
-		}
-		return true
-	}
-	if len(parts) == 4 && parts[0] == "api" && parts[1] == "models" && parts[3] == "quick-test" && r.Method == http.MethodPost {
-		if body, e := decodeBody(r, 64<<10); e != nil {
-			a.fail(w, e)
-			return true
-		} else if len(bytes.TrimSpace(body)) > 0 {
-			a.fail(w, appError("测速请求不接受参数。", 400, "INVALID_REQUEST"))
-			return true
-		}
-		route, e := s.ModelRoute(parts[2])
-		if e != nil {
-			a.fail(w, e)
-			return true
-		}
-		result, e := a.upstreams().QuickTest(r.Context(), route)
-		if e != nil {
-			a.fail(w, e)
-		} else {
-			a.json(w, 200, result)
-		}
-		return true
-	}
-	if len(parts) == 4 && parts[0] == "api" && parts[1] == "models" && parts[3] == "tool-structure-test" && r.Method == http.MethodPost {
-		if body, e := decodeBody(r, 64<<10); e != nil {
-			a.fail(w, e)
-			return true
-		} else if len(bytes.TrimSpace(body)) > 0 {
-			a.fail(w, appError("工具结构测试不接受参数。", 400, "INVALID_REQUEST"))
-			return true
-		}
-		route, e := s.ModelRoute(parts[2])
-		if e != nil {
-			a.fail(w, e)
-			return true
-		}
-		result, e := a.upstreams().ToolStructureTest(r.Context(), route)
-		if e != nil {
-			a.fail(w, e)
-		} else {
-			a.json(w, 200, result)
-		}
-		return true
-	}
-	if path == "api/default" && r.Method == "POST" {
-		var v struct {
-			ModelID json.RawMessage `json:"modelId"`
-		}
-		if !decode(64<<10, &v) {
-			return true
-		}
-		id := ""
-		if len(v.ModelID) == 0 {
-			a.fail(w, appError("必须提供 modelId；清空默认请显式传 null 或空字符串。", 400, "INVALID_REQUEST"))
-			return true
-		}
-		if !bytes.Equal(bytes.TrimSpace(v.ModelID), []byte("null")) {
-			if e := json.Unmarshal(v.ModelID, &id); e != nil {
-				a.fail(w, appError("modelId 必须是字符串或 null。", 400, "INVALID_REQUEST"))
-				return true
-			}
-		}
-		if e := s.SetDefault(id); e != nil {
-			a.fail(w, e)
-		} else {
-			writeState(200)
-		}
-		return true
-	}
-	if path == "api/opencode/sync" && r.Method == "POST" {
-		var v struct {
-			ConfigPath string `json:"configPath,omitempty"`
-		}
-		if !decode(64<<10, &v) {
-			return true
-		}
-		models := []SyncModel{}
-		catalog := s.Catalog()
-		if entries, ok := catalog["models"].([]map[string]any); ok {
-			for _, entry := range entries {
-				slug, _ := entry["slug"].(string)
-				name, _ := entry["display_name"].(string)
-				window, _ := entry["context_window"].(int)
-				models = append(models, SyncModel{Slug: slug, DisplayName: name, ContextWindow: window})
-			}
-		}
-		res, e := SyncOpenCode(OpenCodeSyncOptions{Models: models, ConfigPath: v.ConfigPath})
-		if e != nil {
-			a.fail(w, e)
-		} else {
-			a.json(w, 200, res)
-		}
-		return true
-	}
-	if strings.HasPrefix(path, "api/compatibility") {
-		a.compatibilityAPI(w, r, path, parts, decode, writeState)
+	if strings.HasPrefix(m.path, "api/compatibility") {
+		a.compatibilityAPI(w, r, m.path, m.parts, m.decode, m.writeState)
 		return true
 	}
 	return false
+}
+
+func (m *managementReq) getState(string) {
+	m.app.json(m.w, 200, m.app.stateJSON())
+}
+
+func (m *managementReq) setExposure(id string) {
+	var v struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if !m.decode(64<<10, &v) {
+		return
+	}
+	if v.Enabled == nil {
+		m.app.fail(m.w, appError("enabled must be a boolean", 400, "INVALID_REQUEST"))
+		return
+	}
+	var err error
+	if m.parts[1] == "models" {
+		err = m.store.SetModelExposure(id, *v.Enabled)
+	} else {
+		err = m.store.SetAggregateExposure(id, *v.Enabled)
+	}
+	if err != nil {
+		m.app.fail(m.w, err)
+	} else {
+		m.writeState(200)
+	}
+}
+
+// setModelParams is a narrow endpoint on purpose: editing one published number
+// must not require resending group, name, upstream id and credential, where one
+// stale field would silently rewrite the entry.
+func (m *managementReq) setModelParams(id string) {
+	var v struct {
+		ContextWindow *int `json:"contextWindow"`
+	}
+	if !m.decode(64<<10, &v) {
+		return
+	}
+	if v.ContextWindow == nil {
+		m.app.fail(m.w, appError("contextWindow 必须是整数；传 0 表示不设置。", 400, "INVALID_REQUEST"))
+		return
+	}
+	if e := m.store.SetModelContextWindow(id, *v.ContextWindow); e != nil {
+		m.app.fail(m.w, e)
+	} else {
+		m.writeState(200)
+	}
+}
+
+func (m *managementReq) setOrganization(id string) {
+	var input OrganizationInput
+	if !m.decode(64<<10, &input) {
+		return
+	}
+	if err := m.store.SetOrganization(m.parts[1], id, input); err != nil {
+		m.app.fail(m.w, err)
+	} else {
+		m.writeState(200)
+	}
+}
+
+func (m *managementReq) exportConfig(string) {
+	m.app.json(m.w, http.StatusOK, configBackup{Format: "adroute-config", Version: 1, Config: m.store.Snapshot()})
+}
+
+func (m *managementReq) importConfig(string) {
+	body, err := decodeBody(m.r, 128<<20)
+	var input configImport
+	if err == nil && decodeStrict(body, &input) != nil {
+		err = appError("配置文件格式错误，现有配置未改变。", 400, "INVALID_BACKUP")
+	}
+	if err == nil {
+		err = m.store.importConfig(input)
+	}
+	if err != nil {
+		m.app.fail(m.w, err)
+	} else {
+		m.writeState(http.StatusOK)
+	}
+}
+
+func (m *managementReq) retryCatalog(string) {
+	if !m.requireEmptyBody("目录重试请求不接受参数。") {
+		return
+	}
+	if e := m.store.RetryCatalogPublication(); e != nil {
+		m.app.fail(m.w, appError("配置仍已保存，但客户端目录发布失败。请检查目录文件及权限后重试。", 503, "CATALOG_PUBLICATION_FAILED"))
+	} else {
+		m.writeState(200)
+	}
+}
+
+func (m *managementReq) getSetup(string) {
+	tok := m.store.TokenPair().ProxyToken
+	base := fmt.Sprintf("http://127.0.0.1:%d/v1", m.app.opts.Port)
+	config := fmt.Sprintf("# adroute start 自动合并到 Codex 配置；此处为配置预览\nmodel_provider = \"adroute\"\nmodel = %q\nmodel_catalog_json = %q\n\n[model_providers.adroute]\nname = \"adroute\"\nbase_url = %q\nwire_api = \"responses\"\nexperimental_bearer_token = %q\nrequires_openai_auth = false\nsupports_websockets = false\n", DefaultRouteID, m.store.Paths().Catalog, base, tok)
+	m.app.json(m.w, 200, map[string]any{"proxyUrl": base, "proxyToken": tok, "codexConfig": config, "shellSetup": "adroute start\ncodex"})
+}
+
+func (m *managementReq) createGroup(string) {
+	var v GroupInput
+	if !m.decode(64<<10, &v) {
+		return
+	}
+	if _, e := m.store.CreateGroup(v); e != nil {
+		m.app.fail(m.w, e)
+	} else {
+		m.writeState(201)
+	}
+}
+
+func (m *managementReq) updateGroup(id string) {
+	var v GroupInput
+	if !m.decode(64<<10, &v) {
+		return
+	}
+	if e := m.store.RenameGroup(id, v); e != nil {
+		m.app.fail(m.w, e)
+	} else {
+		m.writeState(200)
+	}
+}
+
+func (m *managementReq) deleteGroup(id string) {
+	if e := m.store.DeleteGroup(id); e != nil {
+		m.app.fail(m.w, e)
+	} else {
+		m.writeState(200)
+	}
+}
+
+func (m *managementReq) createAggregate(string) {
+	var v AggregateInput
+	if !m.decode(64<<10, &v) {
+		return
+	}
+	if _, e := m.store.CreateAggregate(v); e != nil {
+		m.app.fail(m.w, e)
+	} else {
+		m.writeState(201)
+	}
+}
+
+func (m *managementReq) updateAggregate(id string) {
+	var v AggregateInput
+	if !m.decode(64<<10, &v) {
+		return
+	}
+	if e := m.store.UpdateAggregate(id, v); e != nil {
+		m.app.fail(m.w, e)
+	} else {
+		m.writeState(200)
+	}
+}
+
+func (m *managementReq) deleteAggregate(id string) {
+	if e := m.store.DeleteAggregate(id); e != nil {
+		m.app.fail(m.w, e)
+	} else {
+		m.writeState(200)
+	}
+}
+
+func (m *managementReq) setAggregateAvailability(id string) {
+	var v struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if !m.decode(64<<10, &v) {
+		return
+	}
+	if v.Enabled == nil {
+		m.app.fail(m.w, appError("enabled must be a boolean", 400, "INVALID_REQUEST"))
+		return
+	}
+	if e := m.store.SetAggregateEnabled(id, *v.Enabled); e != nil {
+		m.app.fail(m.w, e)
+	} else {
+		m.writeState(200)
+	}
+}
+
+func (m *managementReq) discoverModels(string) {
+	var v DiscoverInput
+	if !m.decode(64<<10, &v) {
+		return
+	}
+	result, e := m.app.upstreams().Discover(m.r.Context(), v.BaseURL, v.APIKey, 30*time.Second)
+	if e != nil {
+		m.app.fail(m.w, e)
+	} else {
+		m.app.json(m.w, 200, result)
+	}
+}
+
+func (m *managementReq) createModel(string) {
+	var v ModelInput
+	if !m.decode(64<<10, &v) {
+		return
+	}
+	if _, e := m.store.CreateModel(v); e != nil {
+		m.app.fail(m.w, e)
+	} else {
+		m.writeState(201)
+	}
+}
+
+func (m *managementReq) copyModel(id string) {
+	if !m.requireEmptyBody("复制请求不接受参数。") {
+		return
+	}
+	if _, e := m.store.CopyModel(id); e != nil {
+		m.app.fail(m.w, e)
+	} else {
+		m.writeState(201)
+	}
+}
+
+// discoverModel may reuse the saved credential of an existing model while the
+// form still lets a new (unsaved) base URL or credential win.
+func (m *managementReq) discoverModel(id string) {
+	var v struct {
+		BaseURL string `json:"baseUrl,omitempty"`
+		APIKey  string `json:"apiKey,omitempty"`
+	}
+	if !m.decode(64<<10, &v) {
+		return
+	}
+	saved, e := m.store.ModelRoute(id)
+	if e != nil {
+		m.app.fail(m.w, e)
+		return
+	}
+	base := strings.TrimSpace(v.BaseURL)
+	if base == "" {
+		base = saved.BaseURL
+	}
+	key := strings.TrimSpace(v.APIKey)
+	if key == "" {
+		key = saved.APIKey
+	}
+	result, e := m.app.upstreams().Discover(m.r.Context(), base, key, 30*time.Second)
+	if e != nil {
+		m.app.fail(m.w, e)
+	} else {
+		m.app.json(m.w, 200, result)
+	}
+}
+
+func (m *managementReq) updateModel(id string) {
+	var v ModelInput
+	if !m.decode(64<<10, &v) {
+		return
+	}
+	if e := m.store.UpdateModel(id, v); e != nil {
+		m.app.fail(m.w, e)
+	} else {
+		m.writeState(200)
+	}
+}
+
+func (m *managementReq) deleteModel(id string) {
+	if e := m.store.DeleteModel(id); e != nil {
+		m.app.fail(m.w, e)
+	} else {
+		m.writeState(200)
+	}
+}
+
+func (m *managementReq) setModelAvailability(id string) {
+	var v struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if !m.decode(64<<10, &v) {
+		return
+	}
+	if v.Enabled == nil {
+		m.app.fail(m.w, appError("enabled must be a boolean", 400, "INVALID_REQUEST"))
+		return
+	}
+	if e := m.store.SetModelEnabled(id, *v.Enabled); e != nil {
+		m.app.fail(m.w, e)
+	} else {
+		m.writeState(200)
+	}
+}
+
+func (m *managementReq) quickTest(id string) {
+	if !m.requireEmptyBody("测速请求不接受参数。") {
+		return
+	}
+	route, e := m.store.ModelRoute(id)
+	if e != nil {
+		m.app.fail(m.w, e)
+		return
+	}
+	result, e := m.app.upstreams().QuickTest(m.r.Context(), route)
+	if e != nil {
+		m.app.fail(m.w, e)
+	} else {
+		m.app.json(m.w, 200, result)
+	}
+}
+
+func (m *managementReq) toolStructureTest(id string) {
+	if !m.requireEmptyBody("工具结构测试不接受参数。") {
+		return
+	}
+	route, e := m.store.ModelRoute(id)
+	if e != nil {
+		m.app.fail(m.w, e)
+		return
+	}
+	result, e := m.app.upstreams().ToolStructureTest(m.r.Context(), route)
+	if e != nil {
+		m.app.fail(m.w, e)
+	} else {
+		m.app.json(m.w, 200, result)
+	}
+}
+
+func (m *managementReq) setDefault(string) {
+	var v struct {
+		ModelID json.RawMessage `json:"modelId"`
+	}
+	if !m.decode(64<<10, &v) {
+		return
+	}
+	id := ""
+	if len(v.ModelID) == 0 {
+		m.app.fail(m.w, appError("必须提供 modelId；清空默认请显式传 null 或空字符串。", 400, "INVALID_REQUEST"))
+		return
+	}
+	if !bytes.Equal(bytes.TrimSpace(v.ModelID), []byte("null")) {
+		if e := json.Unmarshal(v.ModelID, &id); e != nil {
+			m.app.fail(m.w, appError("modelId 必须是字符串或 null。", 400, "INVALID_REQUEST"))
+			return
+		}
+	}
+	if e := m.store.SetDefault(id); e != nil {
+		m.app.fail(m.w, e)
+	} else {
+		m.writeState(200)
+	}
+}
+
+func (m *managementReq) syncOpenCode(string) {
+	var v struct {
+		ConfigPath string `json:"configPath,omitempty"`
+	}
+	if !m.decode(64<<10, &v) {
+		return
+	}
+	models := []SyncModel{}
+	catalog := m.store.Catalog()
+	if entries, ok := catalog["models"].([]map[string]any); ok {
+		for _, entry := range entries {
+			slug, _ := entry["slug"].(string)
+			name, _ := entry["display_name"].(string)
+			window, _ := entry["context_window"].(int)
+			models = append(models, SyncModel{Slug: slug, DisplayName: name, ContextWindow: window})
+		}
+	}
+	res, e := SyncOpenCode(OpenCodeSyncOptions{Models: models, ConfigPath: v.ConfigPath})
+	if e != nil {
+		m.app.fail(m.w, e)
+	} else {
+		m.app.json(m.w, 200, res)
+	}
 }
 
 func strictManagementJSON(b []byte, v any, nullable ...string) error {

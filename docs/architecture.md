@@ -32,23 +32,25 @@ public/
 | 命令行、服务启动/停止、就绪和进程身份 | `cmd/adroute/main.go` | `cmd/adroute/main_test.go` |
 | 内嵌前端、示例和 Prompt | `assets.go` | `assets_test.go` |
 | 状态、配置验证、原子持久化、组/模型 CRUD、默认与目录 | `internal/adroute/store.go`, `manage.go`, `validation.go`, `routes.go`, `types.go` | `store_test.go`, `availability_test.go` |
-| HTTP 管理 API、认证、Host/Origin、安全响应与资源服务 | `internal/adroute/http.go`, `http_management.go` | `http_test.go`, `http_review_test.go`, `http_proxy_test.go` |
+| HTTP 管理 API、认证、Host/Origin、安全响应与资源服务 | `internal/adroute/http.go`, `http_management.go` | `http_test.go`, `http_replay_assets_test.go`, `http_proxy_test.go` |
 | Responses 上游传输、模型发现、快速测速、工具结构测试、压缩和响应流 | `internal/adroute/upstreams.go`, `http_proxy.go` | `quicktest_test.go`, `http_proxy_test.go` |
 | v1/v2/v3 修复器及包校验 | `internal/adroute/compatibility.go`, `adapter_channels.go`, `adapter_stream.go`, `adapter_snapshots.go` | `compatibility_test.go` |
-| 适配包目录与诊断隐私/Prompt | `internal/adroute/adapter_directory_state.go`, `diagnostics.go` | `compatibility_test.go`, `http_review_test.go` |
-| Codex TOML 配置接入/恢复 | `internal/adroute/codex_config.go` | `task3_test.go`, `cmd/adroute/main_test.go` |
-| OpenCode V2 显式 JSONC 同步 | `internal/adroute/opencode_sync.go` | `task3_test.go` |
+| 适配包目录与诊断隐私/Prompt | `internal/adroute/adapter_directory_state.go`, `diagnostics.go` | `compatibility_test.go`, `http_replay_assets_test.go` |
+| Codex TOML 配置接入/恢复 | `internal/adroute/codex_config.go` | `codex_config_connect_test.go`, `cmd/adroute/main_test.go` |
+| OpenCode V2 显式 JSONC 同步 | `internal/adroute/opencode_sync.go` | `opencode_config_test.go` |
+| 共享推理档位（两个客户端同一份表） | `internal/adroute/reasoning.go` | `reasoning_test.go` |
 | 客户端开关与状态（Codex/OpenCode） | `internal/adroute/clients.go` | `clients_test.go` |
+| 模型收纳与公开暴露 | `internal/adroute/organization.go` | `organization_test.go`, `exposure_test.go` |
 | 实际二进制网页与官方 CLI 合成端到端验收 | `browser/go-fixture.js`, `browser/go-acceptance.test.js`, `browser/availability.test.js`, `integration/go-codex.test.js` | `npm test` |
 
-HTTP 层提供直接面向组/模型的管理 API 和 Responses 合同。管理令牌与代理令牌分离；配置变更先验证，再在 Store 锁内提交；请求接收时取得路由快照，避免请求途中被后续编辑改道。没有开放默认时省略 `model` 会得到明确无默认错误，只有字段缺失（不是 `null`、数字或空字符串）才代表跟随 `adroute/default`。快速测速从 HTTP 请求 context 派生 18 秒总截止时间，取消会关闭上游响应体。
+HTTP 层提供直接面向组/模型的管理 API 和 Responses 合同。管理路由是一张「方法 + 路径模式 → 处理函数」的表（`internal/adroute/http_management.go` 的 `managementRoutes`），模式里 `*` 捕获一段路径、`a|b` 表示二选一；每个 handler 拿到已解析的请求对象，不再共用一个跨越多分支的长函数。管理令牌与代理令牌分离；配置变更先验证，再在 Store 锁内提交；请求接收时取得路由快照，避免请求途中被后续编辑改道。没有开放默认时省略 `model` 会得到明确无默认错误，只有字段缺失（不是 `null`、数字或空字符串）才代表跟随 `adroute/default`。快速测速从 HTTP 请求 context 派生 18 秒总截止时间，取消会关闭上游响应体。
 
-0.7.1 修复说明：模型目录同步复用公开 ID 校验；探测在验证终态后立即结束，不等 EOF；诊断以私有目标快照核对样本归属。管理状态报告目录发布 pending，并以独立的 `/api/catalog/retry` 重试文件副作用。前端保存／默认／组操作的 pending 状态与草稿版本独立于 DOM，刷新不会解除单飞；测速结果身份覆盖凭据变更，但不将凭据签名显示到页面或持久化。
+以下几条是 0.7.1 时期的修复记录，行为保留至今，保留原文以便追溯：模型目录同步复用公开 ID 校验；探测在验证终态后立即结束，不等 EOF；诊断以私有目标快照核对样本归属。管理状态报告目录发布 pending，并以独立的 `/api/catalog/retry` 重试文件副作用。前端保存／默认／组操作的 pending 状态与草稿版本独立于 DOM，刷新不会解除单飞；测速结果身份覆盖凭据变更，但不将凭据签名显示到页面或持久化。
 
 ## 生产边界与平台限制
 
 - 当前发布支持 **Linux/WSL**；进程锁和安全文件操作依赖 POSIX 行为，不宣称原生 Windows/macOS 支持。
-- 只接受当前 version 5 配置，不迁移旧配置。不得让新二进制覆盖无法识别的配置。
+- 只接受当前 version 6 配置，不迁移旧配置。不得让新二进制覆盖无法识别的配置。
 - Codex 与 OpenCode 配置更新采用合作式锁、复核及原子替换；不保证与任意不合作编辑器之间的原子 CAS。最终替换窗口内避免外部并发编辑。
 - `package.json`、`package-lock.json` 和 Node 脚本仅供 Playwright/官方 Codex 开发验收；没有 npm runtime dependencies，也没有 npm launcher。
 

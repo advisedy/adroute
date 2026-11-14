@@ -8,7 +8,7 @@
 
 ## Go 模块与模型映射
 
-实现位于 `internal/adroute/jsonc.go`（字节范围解析）与 `internal/adroute/opencode_sync.go`。HTTP 调用由 `internal/adroute/http_management.go` 接入，客户端开关与状态在 `internal/adroute/clients.go`。契约测试位于 `internal/adroute/task3_test.go` 与 `internal/adroute/clients_test.go`；Go 二进制浏览器测试验证开关的单飞与错误呈现。
+实现位于 `internal/adroute/opencode_sync.go`（JSONC 字节范围解析、模型映射渲染与安全写文件）。HTTP 调用由 `internal/adroute/http_management.go` 接入，客户端开关与状态在 `internal/adroute/clients.go`。契约测试位于 `internal/adroute/opencode_config_test.go` 与 `internal/adroute/clients_test.go`；Go 二进制浏览器测试验证开关的单飞与错误呈现。
 
 同步只替换 `providers.adroute.models`。每个条目包含 `name`、`modelID` 和固定的推理档位菜单：
 

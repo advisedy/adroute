@@ -1,6 +1,6 @@
 # 自建模型组与模型管理设计
 
-状态：已实现（配置 version 5 / 服务版本 0.7.1）。初次实现见 [`model-management-implementation-report.md`](model-management-implementation-report.md)，独立审查后的修复见 [`model-management-review-fixes.md`](model-management-review-fixes.md)。本文保留交互与行为约定。
+状态：已实现（配置 version 6 / 服务版本 0.1.0）。本文保留交互与行为约定；0.7.0 的初次实现与 0.7.1 的审查修复是历史记录，配置版本与服务版本号此后都已前进。
 
 ## 目标与范围
 

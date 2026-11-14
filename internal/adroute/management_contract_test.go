@@ -198,3 +198,45 @@ func TestCatalogPublicationFailureIsVisibleAndExplicitlyRetryable(t *testing.T) 
 		t.Fatalf("actual client catalog was not republished: %v", err)
 	}
 }
+
+func TestManagementRoutingTableBindsMethodAndShape(t *testing.T) {
+	s := newTestStore(t)
+	gid := mustGroup(t, s, "work")
+	mid := mustModel(t, s, ModelInput{GroupID: gid, Name: "coding", Model: "m", BaseURL: "https://synthetic.invalid/v1", APIKey: "k"})
+	app := mustHTTPApp(HTTPOptions{Store: s})
+	for _, tc := range []struct {
+		name, method, path string
+		body               any
+		code               int
+		want               string
+	}{
+		// A method the route table does not bind must not be answered by a
+		// different method's handler.
+		{"unknown path", http.MethodGet, "/api/nope", nil, 404, "NOT_FOUND"},
+		{"unbound method on collection", http.MethodGet, "/api/groups", nil, 404, "NOT_FOUND"},
+		{"unbound method on item", http.MethodPost, "/api/models/" + mid, nil, 404, "NOT_FOUND"},
+		{"extra segment", http.MethodPut, "/api/models/" + mid + "/exposure/extra", nil, 404, "NOT_FOUND"},
+		{"missed sub-resource", http.MethodPut, "/api/models/" + mid + "/unknown", nil, 404, "NOT_FOUND"},
+		// A "|" choice binds both literals to the same handler.
+		{"choice literal reaches aggregate", http.MethodPut, "/api/aggregates/" + mid + "/exposure", map[string]any{"enabled": true}, 404, "AGGREGATE_NOT_FOUND"},
+		// A bound route still reaches its own validation, not a generic 404.
+		{"bound route validates", http.MethodPut, "/api/models/" + mid + "/availability", map[string]any{}, 400, "INVALID_REQUEST"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := adminReq(t, app, tc.method, tc.path, tc.body)
+			if w.Code != tc.code || (tc.want != "" && !strings.Contains(w.Body.String(), tc.want)) {
+				t.Fatalf("%s %s = %d %s, want %d %s", tc.method, tc.path, w.Code, w.Body.String(), tc.code, tc.want)
+			}
+		})
+	}
+	// Pattern matching captures exactly one segment and honours "|" choices.
+	if arg, ok := matchManagementPattern("api/models|aggregates/*/exposure", "api/aggregates/G1/exposure"); !ok || arg != "G1" {
+		t.Fatalf("choice pattern captured %q %v", arg, ok)
+	}
+	if _, ok := matchManagementPattern("api/groups/*", "api/groups"); ok {
+		t.Fatal("pattern matched a shorter path")
+	}
+	if _, ok := matchManagementPattern("api/groups|models/*", "api/aggregate/X"); ok {
+		t.Fatal("choice pattern matched a wrong literal")
+	}
+}

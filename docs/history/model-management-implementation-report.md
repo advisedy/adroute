@@ -69,7 +69,7 @@
 
 `GET /api/state`、`GET /api/setup`、`POST|PUT|DELETE /api/groups[/:id]`、`POST /api/models`、`PUT|DELETE /api/models/:id`、`PUT /api/models/:id/availability`、`POST /api/default`、`POST /api/models/discover`、`POST /api/models/:id/discover`、`POST /api/models/:id/quick-test`、`POST /api/models/:id/tool-structure-test`、`POST /api/compatibility/{diagnosis,prompt,replay,refresh,packages,verify,template,remove}`、`PUT /api/compatibility/selection/:modelId`、`POST /api/opencode/sync`。
 
-请求/响应字段与错误码见 [`docs/api-services.md`](api-services.md)。
+请求/响应字段与错误码见 [`docs/api-services.md`](../api-services.md)。
 
 ### 公开路由与模型目录
 
