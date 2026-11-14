@@ -204,3 +204,151 @@ func splitLines(s string) []string {
 	}
 	return lines
 }
+
+// Closing exposure must reach the client config on refresh: an externally closed
+// model disappears from OpenCode's model map, and reopening brings it back. The
+// provider block, endpoint and credential stay untouched.
+func TestOpenCodeRefreshDropsExternallyClosedModels(t *testing.T) {
+	a, _, openCode := clientsFixture(t)
+	state := a.opts.Store.Snapshot()
+	other, err := a.opts.Store.CreateModel(ModelInput{GroupID: state.Groups[0].ID, Name: "spare", Model: "upstream-2", BaseURL: "https://clients.example/v1", APIKey: "synthetic"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := adminReq(t, a, http.MethodPost, "/api/clients/opencode/enabled", map[string]bool{"enabled": true}); w.Code != 200 {
+		t.Fatalf("enable: %d %s", w.Code, w.Body.String())
+	}
+	modelsOf := func() map[string]any {
+		t.Helper()
+		raw, err := os.ReadFile(openCode)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var config struct {
+			Providers map[string]struct {
+				Package  string         `json:"package"`
+				Settings map[string]any `json:"settings"`
+				Models   map[string]any `json:"models"`
+			} `json:"providers"`
+		}
+		if err := json.Unmarshal(raw, &config); err != nil {
+			t.Fatalf("config is not valid JSON: %v\n%s", err, raw)
+		}
+		if config.Providers["adroute"].Package == "" || config.Providers["adroute"].Settings["baseURL"] == nil {
+			t.Fatalf("provider block was damaged: %s", raw)
+		}
+		return config.Providers["adroute"].Models
+	}
+	closedSlug := routeFor(state, state.Models[0]).RouteID
+	openSlug := routeFor(a.opts.Store.Snapshot(), Model{ID: other, GroupID: state.Groups[0].ID, Name: "spare", Model: "upstream-2"}).RouteID
+	if _, ok := modelsOf()[closedSlug]; !ok {
+		t.Fatalf("%s missing right after enable: %#v", closedSlug, modelsOf())
+	}
+	if _, ok := modelsOf()[openSlug]; !ok {
+		t.Fatalf("%s missing right after enable: %#v", openSlug, modelsOf())
+	}
+
+	// Closing exposure alone is not enough: the file changes on the next refresh.
+	if w := adminReq(t, a, http.MethodPut, "/api/models/"+state.Models[0].ID+"/exposure", map[string]bool{"enabled": false}); w.Code != 200 {
+		t.Fatalf("close: %d %s", w.Code, w.Body.String())
+	}
+	if _, ok := modelsOf()[closedSlug]; !ok {
+		t.Fatal("closing exposure rewrote the client file without a refresh")
+	}
+	if w := adminReq(t, a, http.MethodPost, "/api/clients/opencode/refresh", map[string]any{}); w.Code != 200 {
+		t.Fatalf("refresh: %d %s", w.Code, w.Body.String())
+	}
+	if models := modelsOf(); len(models) != 1 {
+		t.Fatalf("closed model stayed in the client config: %#v", models)
+	} else if _, ok := models[openSlug]; !ok {
+		t.Fatalf("refresh dropped the still-open model: %#v", models)
+	}
+
+	// Reopening and refreshing restores exactly that entry.
+	if w := adminReq(t, a, http.MethodPut, "/api/models/"+state.Models[0].ID+"/exposure", map[string]bool{"enabled": true}); w.Code != 200 {
+		t.Fatalf("reopen: %d %s", w.Code, w.Body.String())
+	}
+	if w := adminReq(t, a, http.MethodPost, "/api/clients/opencode/refresh", map[string]any{}); w.Code != 200 {
+		t.Fatalf("refresh after reopen: %d %s", w.Code, w.Body.String())
+	}
+	if _, ok := modelsOf()[closedSlug]; !ok {
+		t.Fatalf("%s was not restored: %#v", closedSlug, modelsOf())
+	}
+}
+
+// Closing every model empties the published model map, which the client switch
+// reads as "not connected": refresh is then refused rather than silently
+// re-enabling. Turning the switch back on is the documented way back.
+func TestClosingEveryModelLeavesOpenCodeNotConnected(t *testing.T) {
+	a, _, openCode := clientsFixture(t)
+	if w := adminReq(t, a, http.MethodPost, "/api/clients/opencode/enabled", map[string]bool{"enabled": true}); w.Code != 200 {
+		t.Fatalf("enable: %d %s", w.Code, w.Body.String())
+	}
+	if w := adminReq(t, a, http.MethodPut, "/api/exposure/models", map[string]bool{"enabled": false}); w.Code != 200 {
+		t.Fatalf("bulk close: %d %s", w.Code, w.Body.String())
+	}
+	if w := adminReq(t, a, http.MethodPost, "/api/clients/opencode/refresh", map[string]any{}); w.Code != 200 {
+		t.Fatalf("refresh: %d %s", w.Code, w.Body.String())
+	}
+	if w := adminReq(t, a, http.MethodPost, "/api/clients/opencode/refresh", map[string]any{}); w.Code != 409 {
+		t.Fatalf("refresh on an emptied client should be refused, got %d %s", w.Code, w.Body.String())
+	}
+	w := adminReq(t, a, http.MethodGet, "/api/clients", nil)
+	var listed map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &listed)
+	if c := clientStateOf(t, listed, ClientOpenCode); c["enabled"] != false {
+		t.Fatalf("an empty model map must read as not connected: %#v", c)
+	}
+	// Reopening exposure does not re-enable the client on its own: the switch is
+	// the only thing that may write a model map, so it is turned on explicitly.
+	if w := adminReq(t, a, http.MethodPut, "/api/exposure/models", map[string]bool{"enabled": true}); w.Code != 200 {
+		t.Fatalf("bulk reopen: %d %s", w.Code, w.Body.String())
+	}
+	if w := adminReq(t, a, http.MethodPost, "/api/clients/opencode/enabled", map[string]bool{"enabled": true}); w.Code != 200 {
+		t.Fatalf("re-enable: %d %s", w.Code, w.Body.String())
+	}
+	raw, err := os.ReadFile(openCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Providers map[string]struct {
+			Models map[string]any `json:"models"`
+		} `json:"providers"`
+	}
+	if err := json.Unmarshal(raw, &config); err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Providers["adroute"].Models) == 0 {
+		t.Fatal("reopened models were not republished")
+	}
+}
+
+// The bulk switch has the same effect through the same path.
+func TestBulkCloseReachesOpenCodeOnRefresh(t *testing.T) {
+	a, _, openCode := clientsFixture(t)
+	if w := adminReq(t, a, http.MethodPost, "/api/clients/opencode/enabled", map[string]bool{"enabled": true}); w.Code != 200 {
+		t.Fatalf("enable: %d %s", w.Code, w.Body.String())
+	}
+	if w := adminReq(t, a, http.MethodPut, "/api/exposure/models", map[string]bool{"enabled": false}); w.Code != 200 {
+		t.Fatalf("bulk close: %d %s", w.Code, w.Body.String())
+	}
+	if w := adminReq(t, a, http.MethodPost, "/api/clients/opencode/refresh", map[string]any{}); w.Code != 200 {
+		t.Fatalf("refresh: %d %s", w.Code, w.Body.String())
+	}
+	raw, err := os.ReadFile(openCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Providers map[string]struct {
+			Models map[string]any `json:"models"`
+		} `json:"providers"`
+	}
+	if err := json.Unmarshal(raw, &config); err != nil {
+		t.Fatal(err)
+	}
+	if models := config.Providers["adroute"].Models; len(models) != 0 {
+		t.Fatalf("bulk close left models in the client config: %#v", models)
+	}
+}
