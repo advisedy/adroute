@@ -239,18 +239,30 @@ func (s *Store) Snapshot() State {
 	return cloneState(s.state)
 }
 func (s *Store) mutate(f func(*State) error) error {
+	_, e := s.mutateChanged(func(st *State) (bool, error) { return true, f(st) })
+	return e
+}
+
+// mutateChanged commits in one step only when f reports a real change. A batch
+// that already matches the stored state must not bump the revision or rewrite
+// the published catalog, so it reports false and touches nothing.
+func (s *Store) mutateChanged(f func(*State) (bool, error)) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	n := cloneState(s.state)
-	if e := f(&n); e != nil {
-		return e
+	changed, e := f(&n)
+	if e != nil {
+		return false, e
+	}
+	if !changed {
+		return false, nil
 	}
 	n.Revision++
 	if e := ValidateState(n); e != nil {
-		return e
+		return false, e
 	}
 	if e := s.persist(n); e != nil {
-		return e
+		return false, e
 	}
 	s.state = n
 	if s.catalogEnabled {
@@ -262,7 +274,7 @@ func (s *Store) mutate(f func(*State) error) error {
 			s.catalogErr = nil
 		}
 	}
-	return nil
+	return true, nil
 }
 func (s *Store) publishCatalogLocked() error {
 	dir := filepath.Join(s.home, "codex")

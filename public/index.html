@@ -90,6 +90,13 @@
             <p class="field-help"><code>adroute/default</code> 跟随此选择；不改变对外权限。</p>
             <p id="default-status" class="field-help" role="status" hidden></p>
           </div>
+          <div class="bulk-exposure panel" id="model-bulk-exposure">
+            <label class="availability-control bulk-exposure-control">
+              <input type="checkbox" class="availability-light bulk-exposure-light" id="model-exposure-all">
+              <span class="bulk-exposure-title">全部模型 · 对外开放</span>
+            </label>
+            <p class="field-help" id="model-exposure-all-status">正在读取…</p>
+          </div>
 
           <div id="model-list" class="model-list"></div>
           <p class="field-help">圆灯表示对外权限，不代表健康。点击测速会发送真实请求，可能产生少量费用。</p>
@@ -105,6 +112,13 @@
           <div class="collection-tabs" role="group" aria-label="聚合收纳视图"><button type="button" data-collection="favorites" data-kind="aggregates">常用</button><button type="button" data-collection="all" data-kind="aggregates">全部</button><button type="button" data-collection="archived" data-kind="aggregates">已归档</button></div>
           <div class="workbench-search"><label class="sr-only" for="aggregate-search">搜索聚合</label><input id="aggregate-search" type="search" placeholder="搜索聚合名称、模型 ID 或成员分组" autocomplete="off"><label class="sr-only" for="aggregate-exposure-filter">聚合对外权限</label><select id="aggregate-exposure-filter"><option value="all">全部权限</option><option value="open">对外开放</option><option value="closed">对外关闭 / 停用</option></select><label class="checkbox-label archive-search"><input id="aggregate-include-archived" type="checkbox"><span>包含归档</span></label></div>
           <p class="field-help workbench-hint">归档仅收起列表，当前对外开放状态保持不变。</p>
+          <div class="bulk-exposure panel" id="aggregate-bulk-exposure">
+            <label class="availability-control bulk-exposure-control">
+              <input type="checkbox" class="availability-light bulk-exposure-light" id="aggregate-exposure-all">
+              <span class="bulk-exposure-title">全部聚合 · 对外开放</span>
+            </label>
+            <p class="field-help" id="aggregate-exposure-all-status">正在读取…</p>
+          </div>
           <div id="aggregate-list" class="aggregate-list"></div>
         </section>
 

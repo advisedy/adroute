@@ -74,6 +74,7 @@ func (a *HTTPApp) stateJSON() map[string]any {
 			"aggregates":         true,
 			"modelAvailability":  true,
 			"modelExposure":      true,
+			"exposureBulk":       true,
 			"organization":       true,
 			"modelCopy":          true,
 			"configTransfer":     true,
@@ -147,6 +148,23 @@ func (m *managementReq) requireEmptyBody(rejection string) bool {
 	return true
 }
 
+// decodeEnabledFlag reads the single {enabled} flag shared by the exposure and
+// availability endpoints. A missing, null or non-boolean value is rejected, so
+// a typo can never be read as "close everything".
+func (m *managementReq) decodeEnabledFlag() (bool, bool) {
+	var v struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if !m.decode(64<<10, &v) {
+		return false, false
+	}
+	if v.Enabled == nil {
+		m.app.fail(m.w, appError("enabled must be a boolean", 400, "INVALID_REQUEST"))
+		return false, false
+	}
+	return *v.Enabled, true
+}
+
 // managementRoute binds one method and path pattern to a handler. A pattern
 // segment is a literal, "*" for one captured segment, or "a|b" for a choice of
 // literals. Routes are tried in order and the first match wins.
@@ -159,6 +177,8 @@ type managementRoute struct {
 var managementRoutes = []managementRoute{
 	{http.MethodGet, "api/state", (*managementReq).getState},
 	{http.MethodPut, "api/models|aggregates/*/exposure", (*managementReq).setExposure},
+	{http.MethodPut, "api/exposure/models", (*managementReq).setAllModelExposure},
+	{http.MethodPut, "api/exposure/aggregates", (*managementReq).setAllAggregateExposure},
 	{http.MethodPut, "api/models/*/params", (*managementReq).setModelParams},
 	{http.MethodPut, "api/groups|models|aggregates/*/organization", (*managementReq).setOrganization},
 	{http.MethodGet, "api/config/export", (*managementReq).exportConfig},
@@ -249,24 +269,46 @@ func (m *managementReq) getState(string) {
 }
 
 func (m *managementReq) setExposure(id string) {
-	var v struct {
-		Enabled *bool `json:"enabled"`
-	}
-	if !m.decode(64<<10, &v) {
-		return
-	}
-	if v.Enabled == nil {
-		m.app.fail(m.w, appError("enabled must be a boolean", 400, "INVALID_REQUEST"))
+	enabled, ok := m.decodeEnabledFlag()
+	if !ok {
 		return
 	}
 	var err error
 	if m.parts[1] == "models" {
-		err = m.store.SetModelExposure(id, *v.Enabled)
+		err = m.store.SetModelExposure(id, enabled)
 	} else {
-		err = m.store.SetAggregateExposure(id, *v.Enabled)
+		err = m.store.SetAggregateExposure(id, enabled)
 	}
 	if err != nil {
 		m.app.fail(m.w, err)
+	} else {
+		m.writeState(200)
+	}
+}
+
+// setAllModelExposure flips public access for every model entry at once. It is
+// the bulk counterpart of setExposure and deliberately does not touch aggregates.
+func (m *managementReq) setAllModelExposure(string) {
+	enabled, ok := m.decodeEnabledFlag()
+	if !ok {
+		return
+	}
+	if _, e := m.store.SetAllModelExposure(enabled); e != nil {
+		m.app.fail(m.w, e)
+	} else {
+		m.writeState(200)
+	}
+}
+
+// setAllAggregateExposure is the aggregate page's own switch; it never reads or
+// writes model exposure.
+func (m *managementReq) setAllAggregateExposure(string) {
+	enabled, ok := m.decodeEnabledFlag()
+	if !ok {
+		return
+	}
+	if _, e := m.store.SetAllAggregateExposure(enabled); e != nil {
+		m.app.fail(m.w, e)
 	} else {
 		m.writeState(200)
 	}
@@ -408,17 +450,11 @@ func (m *managementReq) deleteAggregate(id string) {
 }
 
 func (m *managementReq) setAggregateAvailability(id string) {
-	var v struct {
-		Enabled *bool `json:"enabled"`
-	}
-	if !m.decode(64<<10, &v) {
+	enabled, ok := m.decodeEnabledFlag()
+	if !ok {
 		return
 	}
-	if v.Enabled == nil {
-		m.app.fail(m.w, appError("enabled must be a boolean", 400, "INVALID_REQUEST"))
-		return
-	}
-	if e := m.store.SetAggregateEnabled(id, *v.Enabled); e != nil {
+	if e := m.store.SetAggregateEnabled(id, enabled); e != nil {
 		m.app.fail(m.w, e)
 	} else {
 		m.writeState(200)
@@ -513,17 +549,11 @@ func (m *managementReq) deleteModel(id string) {
 }
 
 func (m *managementReq) setModelAvailability(id string) {
-	var v struct {
-		Enabled *bool `json:"enabled"`
-	}
-	if !m.decode(64<<10, &v) {
+	enabled, ok := m.decodeEnabledFlag()
+	if !ok {
 		return
 	}
-	if v.Enabled == nil {
-		m.app.fail(m.w, appError("enabled must be a boolean", 400, "INVALID_REQUEST"))
-		return
-	}
-	if e := m.store.SetModelEnabled(id, *v.Enabled); e != nil {
+	if e := m.store.SetModelEnabled(id, enabled); e != nil {
 		m.app.fail(m.w, e)
 	} else {
 		m.writeState(200)

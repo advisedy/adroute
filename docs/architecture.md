@@ -31,7 +31,7 @@ public/
 |---|---|---|
 | 命令行、服务启动/停止、就绪和进程身份 | `cmd/adroute/main.go` | `cmd/adroute/main_test.go` |
 | 内嵌前端、示例和 Prompt | `assets.go` | `assets_test.go` |
-| 状态、配置验证、原子持久化、组/模型 CRUD、默认与目录 | `internal/adroute/store.go`, `manage.go`, `validation.go`, `routes.go`, `types.go` | `store_test.go`, `availability_test.go` |
+| 状态、配置验证、原子持久化、组/模型 CRUD、默认与目录、整页对外开放批量切换 | `internal/adroute/store.go`, `manage.go`, `validation.go`, `routes.go`, `types.go` | `store_test.go`, `availability_test.go`, `exposure_test.go` |
 | HTTP 管理 API、认证、Host/Origin、安全响应与资源服务 | `internal/adroute/http.go`, `http_management.go` | `http_test.go`, `http_replay_assets_test.go`, `http_proxy_test.go` |
 | Responses 上游传输、模型发现、快速测速、工具结构测试、压缩和响应流 | `internal/adroute/upstreams.go`, `http_proxy.go` | `quicktest_test.go`, `http_proxy_test.go` |
 | v1/v2/v3 修复器及包校验 | `internal/adroute/compatibility.go`, `adapter_channels.go`, `adapter_stream.go`, `adapter_snapshots.go` | `compatibility_test.go` |

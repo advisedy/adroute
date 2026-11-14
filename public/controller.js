@@ -29,6 +29,9 @@
   }
   function saveCollapsedGroups() { try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...collapsedGroups])); } catch { /* storage may be unavailable */ } }
   const pendingAvailability = new Map();
+  // Bulk switches save for a whole page, so they lock their own page's single
+  // toggles instead of racing them.
+  const pendingBulk = new Set();
   const unknownExposure = new Set();
   const pendingWrites = new Map();
   const groupDrafts = new Map();
@@ -61,6 +64,7 @@
   }
   function backendReady() { return state?.capabilities?.models === true; }
   function availabilityReady() { return backendReady() && state?.capabilities?.modelExposure === true; }
+  function bulkExposureReady() { return availabilityReady() && state?.capabilities?.exposureBulk === true; }
   function quickTestReady() { return backendReady() && state?.capabilities?.quickTest === true; }
   function aggregatesReady() { return backendReady() && state?.capabilities?.aggregates === true; }
   function remember(value) { try { if (value) sessionStorage.setItem(SESSION, value); else sessionStorage.removeItem(SESSION); } catch { /* tabs may block storage */ } }
@@ -91,7 +95,7 @@
     for (const controller of controllers) controller.abort();
     controllers.clear();
     for (const operation of pendingTests.values()) operation.controller.abort();
-    pendingTests.clear(); testResults.clear(); collapsedGroups.clear(); pendingAvailability.clear(); unknownExposure.clear(); pendingWrites.clear(); groupDrafts.clear();
+    pendingTests.clear(); testResults.clear(); collapsedGroups.clear(); pendingAvailability.clear(); pendingBulk.clear(); unknownExposure.clear(); pendingWrites.clear(); groupDrafts.clear();
     expandedEntries.clear(); collections.models = collections.aggregates = null;
     for (const kind of ['model', 'aggregate']) {
       $(`${kind}-search`).value = ''; $(`${kind}-include-archived`).checked = false; $(`${kind}-exposure-filter`).value = 'all';
@@ -152,8 +156,7 @@
 
   function syncPendingControls() {
     const ready = backendReady();
-    for (const id of ['add-model', 'manage-groups']) $(id).disabled = !ready;
-    for (const id of ['import-config', 'export-config']) $(id).disabled = !ready || state?.capabilities?.configTransfer !== true || pendingWrites.has(id);
+    for (const id of ['add-model', 'manage-groups']) $(id).disabled = !ready;    for (const id of ['import-config', 'export-config']) $(id).disabled = !ready || state?.capabilities?.configTransfer !== true || pendingWrites.has(id);
     $('import-confirm').disabled = !ready || pendingWrites.has('import-confirm');
     $('model-save').disabled = !ready || pendingWrites.has(modelWriteKey());
     $('aggregate-save').disabled = !ready || pendingWrites.has(aggregateWriteKey());
@@ -180,7 +183,7 @@
         if (action === 'default') button.disabled = button.disabled || state?.models.find(item => item.id === id)?.disabled || pendingWrites.has('default-model');
       }
       const toggle = row.querySelector('[data-availability]');
-      toggle.disabled = !availabilityReady() || busy || pendingAvailability.has(id) || unknownExposure.has(id) || state?.models.find(item => item.id === id)?.disabled;
+      toggle.disabled = !availabilityReady() || busy || pendingBulk.has('models') || pendingAvailability.has(id) || unknownExposure.has(id) || state?.models.find(item => item.id === id)?.disabled;
     }
     $('add-aggregate').disabled = !ready;
     for (const card of $('aggregate-list').querySelectorAll('[data-aggregate-id]')) {
@@ -191,13 +194,14 @@
         if (button.dataset.aggregateDefault) button.disabled = button.disabled || state.aggregates.find(a => a.id === id)?.disabled || !state.aggregates.find(a => a.id === id)?.openMemberCount || pendingWrites.has('default-model');
       }
       const toggle = card.querySelector('[data-aggregate-availability]');
-      if (toggle) toggle.disabled = !aggregatesReady() || !availabilityReady() || pendingAvailability.has(`aggregate:${id}`) || pendingWrites.has(`aggregate:${id}`) || unknownExposure.has(`aggregate:${id}`) || state?.aggregates.find(item => item.id === id)?.disabled;
+      if (toggle) toggle.disabled = !aggregatesReady() || !availabilityReady() || pendingBulk.has('aggregates') || pendingAvailability.has(`aggregate:${id}`) || pendingWrites.has(`aggregate:${id}`) || unknownExposure.has(`aggregate:${id}`) || state?.aggregates.find(item => item.id === id)?.disabled;
     }
     for (const control of document.querySelectorAll('[data-organization-key]')) {
       const key = control.dataset.organizationKey;
       const model = key.startsWith('model:') && state?.models.find(m => `model:${m.id}` === key);
       control.disabled = !ready || state?.capabilities?.organization !== true || pendingWrites.has(key) || (model && (pendingTests.has(model.id) || pendingAvailability.has(model.id))) || (key.startsWith('aggregate:') && pendingAvailability.has(key));
     }
+    renderBulkExposure();
   }
 
   async function action(control, errorId, work, current = () => true, key = control.id) {
@@ -579,7 +583,88 @@
     }
     renderAggregates();
     renderDefaultSelect();
+    renderBulkExposure();
     syncPendingControls();
+  }
+
+  // The page-level switch mirrors the page it sits on: models on the model page,
+  // aggregates on the aggregate page. Disabled entries are excluded from both
+  // the count and the write, because "有内部停用" is not an exposure decision.
+  function bulkExposureEntries(kind) {
+    return (state?.[kind] || []).filter(entry => !entry.disabled);
+  }
+
+  function bulkExposureState(kind) {
+    const entries = bulkExposureEntries(kind);
+    const open = entries.filter(entry => !entry.exposureDisabled).length;
+    return { entries, open, total: entries.length, all: entries.length > 0 && open === entries.length, none: open === 0 };
+  }
+
+  function renderBulkExposure() {
+    const specs = [
+      { kind: 'models', toggle: 'model-exposure-all', status: 'model-exposure-all-status', noun: '模型' },
+      { kind: 'aggregates', toggle: 'aggregate-exposure-all', status: 'aggregate-exposure-all-status', noun: '聚合' },
+    ];
+    for (const spec of specs) {
+      const toggle = $(spec.toggle), status = $(spec.status);
+      if (!toggle || !status) continue;
+      const { open, total, all, none } = bulkExposureState(spec.kind);
+      const pending = pendingBulk.has(spec.kind);
+      // A single-entry save on the same page also blocks the page switch, so the
+      // two paths cannot overwrite each other.
+      const singleBusy = [...pendingAvailability.keys()].some(key => spec.kind === 'models' ? !key.startsWith('aggregate:') : key.startsWith('aggregate:'));
+      toggle.checked = all;
+      toggle.indeterminate = !all && !none;
+      toggle.disabled = !bulkExposureReady() || pending || singleBusy || !total;
+      toggle.setAttribute('aria-label', `${spec.noun}批量对外开放（${open} / ${total} 个已开放）`);
+      toggle.dataset.bulkExposure = spec.kind;
+      status.textContent = pending ? '正在保存整页权限…'
+        : singleBusy ? '正在保存单个条目的权限…'
+        : !total ? `还没有可开放的${spec.noun}；已停用的条目不计入。`
+        : `${open} / ${total} 个${spec.noun}对外开放${all ? '（全部开放）' : none ? '（全部关闭）' : '（部分开放）'}；已停用的条目不计入，也不会被改动。`;
+    }
+  }
+
+  async function toggleBulkExposure(kind) {
+    if (pendingBulk.has(kind) || !state) return;
+    const { all, none, total } = bulkExposureState(kind);
+    const noun = kind === 'models' ? '模型' : '聚合';
+    // A partial page becomes fully open first: that is additive and needs no
+    // confirmation. Closing everything is the destructive direction.
+    const enabled = !all;
+    if (!enabled && !none) {
+      const extra = kind === 'models' ? '\n\n内部测速、聚合成员和默认路由不受影响。' : '\n\n模型条目不受影响。';
+      if (!confirm(`关闭全部 ${total} 个${noun}的对外开放？正在使用它们的外部客户端会立即看不到。${extra}`)) {
+        renderBulkExposure();
+        return;
+      }
+    }
+    const started = epoch;
+    pendingBulk.add(kind);
+    // Lock this page's single toggles in the same tick the bulk write starts.
+    syncPendingControls();
+    try {
+      applyState(await api(`/api/exposure/${kind}`, { method: 'PUT', body: { enabled } }));
+      toast(enabled ? `已将全部${noun}对外开放。` : `已将全部${noun}关闭对外。`);
+    } catch (error) {
+      if (!(error instanceof StaleRequest) && started === epoch) {
+        // A lost response is not a rejection: re-read before claiming anything.
+        try {
+          applyState(await api('/api/state'));
+          const latest = bulkExposureState(kind);
+          const unchanged = enabled ? latest.open === 0 : latest.none === false && latest.open === latest.total;
+          toast(unchanged ? `批量操作未生效：${error.message}` : '请求响应异常，已重新确认服务器状态。');
+        } catch (refreshError) {
+          if (!(refreshError instanceof StaleRequest) && started === epoch) {
+            toast('无法确认批量结果，请刷新状态后再操作；请勿假定已全部关闭。');
+          }
+        }
+      }
+    } finally {
+      pendingBulk.delete(kind);
+      if (state) renderBulkExposure();
+      syncPendingControls();
+    }
   }
 
   function badge(label, className = 'badge') { return node('span', label, className); }
@@ -594,7 +679,7 @@
     if (aggregate) toggle.dataset.aggregateAvailability = entry.id;
     else toggle.dataset.availability = entry.id;
     toggle.setAttribute('aria-label', `对外开放${aggregate ? '聚合' : ''} ${aggregate ? entry.name : `${entry.groupName} / ${entry.name}`}`);
-    toggle.disabled = !availabilityReady() || pendingAvailability.has(key) || unknownExposure.has(key) || entry.disabled;
+    toggle.disabled = !availabilityReady() || pendingAvailability.has(key) || pendingBulk.has(aggregate ? 'aggregates' : 'models') || unknownExposure.has(key) || entry.disabled;
     const label = node('span', pendingAvailability.has(key) ? '正在保存…' : unknownExposure.has(key) ? '状态待确认' : entry.disabled ? '已停用' : entry.exposureDisabled ? '对外关闭' : '对外开放');
     wrap.title = '点击切换对外开放；关闭后外部不可获取或直接调用，不影响内部使用及聚合成员。';
     toggle.addEventListener('change', () => toggleAvailability(entry, toggle.checked, toggle, label, aggregate));
@@ -1389,6 +1474,8 @@
   for (const dialog of document.querySelectorAll('dialog')) dialog.addEventListener('cancel', event => { event.preventDefault(); closeDialog(dialog.id); });
   $('setup-retry').addEventListener('click', () => { setup = null; loadSetup(); });
   $('request-filter').addEventListener('change', () => { if (state) renderRequests(); });
+  $('model-exposure-all').addEventListener('change', () => toggleBulkExposure('models'));
+  $('aggregate-exposure-all').addEventListener('change', () => toggleBulkExposure('aggregates'));
 
   $('add-model').addEventListener('click', () => openModelForm());
   $('add-aggregate').addEventListener('click', () => openAggregateForm());

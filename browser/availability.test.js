@@ -222,3 +222,103 @@ test('legacy stopped model and aggregate have a distinct recovery action', { tim
   await expect(card.locator('[data-aggregate-availability]')).toBeChecked();
   assert.equal((await f.state()).aggregates[0].disabled, false);
 });
+
+// Each page owns one switch. Closing is destructive, so it asks first; a
+// partial page opens fully before it can be closed.
+test('bulk exposure switches are independent per page and confirm before closing', { timeout: 90000 }, async t => {
+  const f = await goBrowserFixture(t, { initialState: seedState({ isDefault: true }) });
+  const { page } = f;
+  const calls = [];
+  page.on('request', r => { if (r.url().includes('/api/exposure/') && r.method() === 'PUT') calls.push(new URL(r.url()).pathname); });
+  const other = await goSavedModel(f, { group: 'seed', name: 'spare' });
+  await f.login();
+
+  const modelSwitch = page.locator('#model-exposure-all');
+  const aggregateSwitch = page.locator('#aggregate-exposure-all');
+  await expect(modelSwitch).toBeChecked();
+  await expect(page.locator('#model-exposure-all-status')).toContainText('2 / 2 个模型对外开放（全部开放）');
+
+  // A partial page shows the amber indeterminate state and opens first.
+  await f.api(`/api/models/${other.id}/exposure`, 'PUT', { enabled: false });
+  await page.locator('#refresh-button').click();
+  await expect(modelSwitch).toHaveJSProperty('indeterminate', true);
+  await expect(page.locator('#model-exposure-all-status')).toContainText('1 / 2 个模型对外开放（部分开放）');
+  await modelSwitch.click();
+  await expect.poll(async () => (await f.state()).models.every(m => !m.exposureDisabled)).toBe(true);
+  assert.deepEqual(calls, ['/api/exposure/models']);
+
+  // Closing asks first; a declined dialog changes nothing.
+  let asked = '';
+  page.once('dialog', async dialog => { asked = dialog.message(); await dialog.dismiss(); });
+  await modelSwitch.click();
+  await expect.poll(() => asked).toContain('关闭全部 2 个模型');
+  await expect(modelSwitch).toBeChecked();
+  assert.equal((await f.state()).models.every(m => !m.exposureDisabled), true);
+
+  // Accepting it closes every model, keeps the default, and leaves aggregates alone.
+  page.once('dialog', dialog => dialog.accept());
+  await modelSwitch.click();
+  await expect.poll(async () => (await f.state()).models.every(m => m.exposureDisabled)).toBe(true);
+  await expect(modelSwitch).not.toBeChecked();
+  await expect(page.locator('#model-exposure-all-status')).toContainText('0 / 2 个模型对外开放（全部关闭）');
+  let state = await f.state();
+  assert.equal(state.defaultModelId, 'seed-model');
+  assert.equal(state.models.every(m => m.disabled === false), true, 'bulk exposure is never an availability switch');
+
+  // The aggregate page has its own switch and was never touched.
+  const created = await f.api('/api/aggregates', 'POST', { name: 'chain', members: ['seed-model'], maxRounds: 1 });
+  assert.equal(created.status, 201, await created.text());
+  await page.locator('#refresh-button').click();
+  await page.locator('[data-tab="aggregates"]').click();
+  await expect(aggregateSwitch).toBeChecked();
+  await expect(page.locator('#aggregate-exposure-all-status')).toContainText('1 / 1 个聚合对外开放');
+  await page.once('dialog', dialog => dialog.accept());
+  await aggregateSwitch.click();
+  await expect.poll(async () => (await f.state()).aggregates.every(a => a.exposureDisabled)).toBe(true);
+  assert.deepEqual(calls, ['/api/exposure/models', '/api/exposure/models', '/api/exposure/aggregates']);
+  // Reopening aggregates does not reopen models.
+  await aggregateSwitch.click();
+  await expect.poll(async () => (await f.state()).aggregates.every(a => !a.exposureDisabled)).toBe(true);
+  state = await f.state();
+  assert.equal(state.models.every(m => m.exposureDisabled), true, 'aggregate switch must not touch models');
+});
+
+test('bulk exposure skips disabled entries and stays single-flight', { timeout: 90000 }, async t => {
+  const f = await goBrowserFixture(t, { initialState: seedState() });
+  const { page } = f;
+  const parked = await goSavedModel(f, { group: 'seed', name: 'parked' });
+  await f.api(`/api/models/${parked.id}/availability`, 'PUT', { enabled: false });
+  await f.login();
+
+  const modelSwitch = page.locator('#model-exposure-all');
+  // A disabled entry is neither counted nor written.
+  await expect(page.locator('#model-exposure-all-status')).toContainText('1 / 1 个模型对外开放');
+
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let started; const posted = new Promise(resolve => { started = resolve; });
+  await page.route('**/api/exposure/models', async route => { started(); await gate; await route.continue().catch(() => {}); });
+  page.once('dialog', dialog => dialog.accept());
+  await modelSwitch.click();
+  await posted;
+  // While the page switch saves, its own single toggles are locked out.
+  await expect(page.locator('#model-exposure-all-status')).toContainText('正在保存整页权限');
+  await expect(page.locator('input[data-availability]').first()).toBeDisabled();
+  release();
+  await expect.poll(async () => (await f.state()).models.find(m => m.id === 'seed-model').exposureDisabled).toBe(true);
+  const state = await f.state();
+  assert.equal(state.models.find(m => m.id === parked.id).disabled, true, 'disabled entry stays disabled');
+  assert.notEqual(state.models.find(m => m.id === parked.id).exposureDisabled, true, 'disabled entry gets no hidden closed state');
+});
+
+test('bulk exposure switch is disabled when the backend lacks the capability', { timeout: 60000 }, async t => {
+  const f = await goBrowserFixture(t, { initialState: seedState() });
+  await f.page.route('**/api/state', async route => {
+    const response = await route.fetch(); const state = await response.json();
+    delete state.capabilities.exposureBulk;
+    await route.fulfill({ json: state });
+  });
+  await f.login();
+  await expect(f.page.locator('#model-exposure-all')).toBeDisabled();
+  await expect(f.page.locator('#model-exposure-all-status')).toContainText('1 / 1 个模型对外开放');
+});

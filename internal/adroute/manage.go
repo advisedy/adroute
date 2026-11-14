@@ -492,6 +492,41 @@ func (s *Store) SetAggregateExposure(id string, enabled bool) error {
 	})
 }
 
+// SetAllModelExposure is the page-level bulk switch. It commits every model
+// entry in one atomic write, so a mid-way failure cannot leave a half-open
+// gateway. Disabled entries are skipped in both directions: they are
+// unreachable anyway, and quietly pre-closing them would surface later as an
+// unexplained closed state right after someone re-enables them.
+func (s *Store) SetAllModelExposure(enabled bool) (bool, error) {
+	return s.mutateChanged(func(st *State) (bool, error) {
+		changed := false
+		for i := range st.Models {
+			if st.Models[i].Disabled || st.Models[i].ExposureDisabled == !enabled {
+				continue
+			}
+			st.Models[i].ExposureDisabled = !enabled
+			changed = true
+		}
+		return changed, nil
+	})
+}
+
+// SetAllAggregateExposure mirrors SetAllModelExposure for aggregates. Models and
+// aggregates are separate switches on separate pages and never affect each other.
+func (s *Store) SetAllAggregateExposure(enabled bool) (bool, error) {
+	return s.mutateChanged(func(st *State) (bool, error) {
+		changed := false
+		for i := range st.Aggregates {
+			if st.Aggregates[i].Disabled || st.Aggregates[i].ExposureDisabled == !enabled {
+				continue
+			}
+			st.Aggregates[i].ExposureDisabled = !enabled
+			changed = true
+		}
+		return changed, nil
+	})
+}
+
 func (s *Store) SetAggregateEnabled(id string, enabled bool) error {
 	return s.mutate(func(st *State) error {
 		index := aggregateIndex(st, id)
