@@ -61,7 +61,7 @@ func testReleaseInstaller(t *testing.T, online bool) {
 			t.Fatal(err)
 		}
 	}
-	asset := "adroute_0.1.0_" + runtime.GOOS + "_" + runtime.GOARCH + suffix
+	asset := "adroute_0.1.1_" + runtime.GOOS + "_" + runtime.GOARCH + suffix
 	var corrupt atomic.Bool
 	var corruptBootstrap atomic.Bool
 	var unavailable atomic.Bool
@@ -71,10 +71,10 @@ func testReleaseInstaller(t *testing.T, online bool) {
 				http.NotFound(w, r)
 				return
 			}
-			http.Redirect(w, r, "/releases/tag/v0.1.0", http.StatusFound)
+			http.Redirect(w, r, "/releases/tag/v0.1.1", http.StatusFound)
 			return
 		}
-		if r.URL.Path == "/releases/tag/v0.1.0" {
+		if r.URL.Path == "/releases/tag/v0.1.1" {
 			return
 		}
 		switch filepath.Base(r.URL.Path) {
@@ -131,7 +131,7 @@ func testReleaseInstaller(t *testing.T, online bool) {
 	if runtime.GOOS == "windows" {
 		installed = filepath.Join(prefix, "adroute.exe")
 	}
-	if output, err := exec.Command(installed, "--version").CombinedOutput(); err != nil || strings.TrimSpace(string(output)) != "0.1.0" {
+	if output, err := exec.Command(installed, "--version").CombinedOutput(); err != nil || strings.TrimSpace(string(output)) != "0.1.1" {
 		t.Fatalf("version: %v %s", err, output)
 	}
 	if online {
@@ -156,7 +156,7 @@ func testReleaseInstaller(t *testing.T, online bool) {
 	if output, err := run(); err == nil {
 		t.Fatalf("checksum mismatch accepted: %s", output)
 	}
-	if output, err := exec.Command(installed, "--version").CombinedOutput(); err != nil || strings.TrimSpace(string(output)) != "0.1.0" {
+	if output, err := exec.Command(installed, "--version").CombinedOutput(); err != nil || strings.TrimSpace(string(output)) != "0.1.1" {
 		t.Fatalf("failed update damaged installation: %v %s", err, output)
 	}
 }
@@ -190,15 +190,15 @@ func TestReleaseInstallerResumesTruncatedDownload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	asset := "adroute_0.1.0_" + runtime.GOOS + "_" + runtime.GOARCH + suffix
+	asset := "adroute_0.1.1_" + runtime.GOOS + "_" + runtime.GOARCH + suffix
 	var truncated atomic.Int32
 	var resumed atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/releases/latest" {
-			http.Redirect(w, r, "/releases/tag/v0.1.0", http.StatusFound)
+			http.Redirect(w, r, "/releases/tag/v0.1.1", http.StatusFound)
 			return
 		}
-		if r.URL.Path == "/releases/tag/v0.1.0" {
+		if r.URL.Path == "/releases/tag/v0.1.1" {
 			return
 		}
 		name := filepath.Base(r.URL.Path)
@@ -264,7 +264,7 @@ func TestReleaseInstallerResumesTruncatedDownload(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		installed = filepath.Join(prefix, "adroute.exe")
 	}
-	if output, err := exec.Command(installed, "--version").CombinedOutput(); err != nil || strings.TrimSpace(string(output)) != "0.1.0" {
+	if output, err := exec.Command(installed, "--version").CombinedOutput(); err != nil || strings.TrimSpace(string(output)) != "0.1.1" {
 		t.Fatalf("version after resumed download: %v %s", err, output)
 	}
 }

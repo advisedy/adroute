@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Pinned release: this script and every downloaded file belong to one version.
-version=0.1.0
+version=0.1.1
 base=${ADROUTE_RELEASE_BASE_URL:-https://github.com/advisedy/adroute/releases/download/v$version}
 [[ $(uname -s) == Linux ]] || { echo 'Only Linux/WSL is supported by this installer.' >&2; exit 1; }
 case $(uname -m) in

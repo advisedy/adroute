@@ -45,20 +45,20 @@ irm https://raw.githubusercontent.com/advisedy/adroute/main/install-online.ps1 |
 
 `ADROUTE_INSTALL_PROXY` 会被传给下载的版本安装器（也接受 `-Proxy` 参数）。只想先拿到可执行文件时，按下一节手动下载并安装。
 
-### 一键安装 v0.1.0（无需 Go）
+### 一键安装指定版本 v0.1.1（无需 Go）
 
-从 [GitHub Releases](https://github.com/advisedy/adroute/releases/tag/v0.1.0) 安装预编译版本，支持 Linux / WSL、Windows 的 amd64 和 arm64。安装器自动选择架构，下载二进制并核对 SHA-256，无须管理员权限、Go 或 Node.js。
+从 [GitHub Releases](https://github.com/advisedy/adroute/releases/tag/v0.1.1) 安装预编译版本，支持 Linux / WSL、Windows 的 amd64 和 arm64。安装器自动选择架构，下载二进制并核对 SHA-256，无须管理员权限、Go 或 Node.js。
 
 Linux / WSL（需要 curl、Bash 和 sha256sum）：
 
 ```bash
-curl -fsSL https://github.com/advisedy/adroute/releases/download/v0.1.0/install-release.sh -o /tmp/adroute-install.sh && bash /tmp/adroute-install.sh --configure-path
+curl -fsSL https://github.com/advisedy/adroute/releases/download/v0.1.1/install-release.sh -o /tmp/adroute-install.sh && bash /tmp/adroute-install.sh --configure-path
 ```
 
 Windows PowerShell：
 
 ```powershell
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $installer = Join-Path $env:TEMP 'adroute-install.ps1'; Invoke-WebRequest -UseBasicParsing https://github.com/advisedy/adroute/releases/download/v0.1.0/install-release.ps1 -OutFile $installer; if (-not $?) { throw 'Download failed' }; powershell -NoProfile -ExecutionPolicy Bypass -File $installer
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $installer = Join-Path $env:TEMP 'adroute-install.ps1'; Invoke-WebRequest -UseBasicParsing https://github.com/advisedy/adroute/releases/download/v0.1.1/install-release.ps1 -OutFile $installer; if (-not $?) { throw 'Download failed' }; powershell -NoProfile -ExecutionPolicy Bypass -File $installer
 ```
 
 安装后重新打开终端，运行 `adroute start`。Linux 默认安装到 `~/.local/bin` 并配置 Bash/Zsh PATH；Windows 默认安装到 `%LOCALAPPDATA%\Programs\AdRoute` 并加入用户 PATH。更新前先运行 `adroute stop`，再重跑安装命令；脚本不会自动停止或启动服务。使用 `--no-modify-path`（Linux）或 `-NoModifyPath`（Windows）可禁止修改 PATH；使用 `--prefix` 或 `-InstallDir` 可指定目录。

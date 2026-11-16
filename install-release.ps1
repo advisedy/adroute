@@ -2,14 +2,14 @@
 param(
     [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'Programs\AdRoute'),
     [switch]$NoModifyPath,
-    [string]$ReleaseBaseURL = 'https://github.com/advisedy/adroute/releases/download/v0.1.0',
+    [string]$ReleaseBaseURL = 'https://github.com/advisedy/adroute/releases/download/v0.1.1',
     [int]$MaxAttempts = 3,
     [int]$RetryDelaySeconds = 2,
     [string]$Proxy
 )
 
 $ErrorActionPreference = 'Stop'
-$version = '0.1.0'
+$version = '0.1.1'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $proxyUrl = if ($Proxy) { $Proxy } elseif ($env:ADROUTE_INSTALL_PROXY) { $env:ADROUTE_INSTALL_PROXY } else { $null }
 
